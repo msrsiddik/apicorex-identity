@@ -1,0 +1,48 @@
+# Standalone compose for the Identity plugin + its database.
+#
+# This runs the plugin and a Postgres instance. The plugin needs a running
+# ApiCoreX Core to register with — point CORE_URL at it. For an all-in-one
+# stack (Core + Postgres + Redis + every plugin) use the compose file in the
+# apicorex (Core) repo instead.
+#
+#   docker compose up --build
+#
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: apicorex
+      POSTGRES_PASSWORD: apicorex
+      POSTGRES_DB: apicorex
+    ports:
+      - "5432:5432"
+    volumes:
+      - identity_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apicorex"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  identity:
+    build: .
+    environment:
+      DATABASE_URL: postgres://apicorex:apicorex@postgres:5432/apicorex?sslmode=disable
+      JWT_SECRET: change-me-to-a-long-random-secret
+      PLUGIN_API_KEY: change-me-plugin-key
+      # Core's URL. When Core also runs in Docker, attach both to the same
+      # network and use the Core service name, e.g. http://core:8080.
+      CORE_URL: http://host.docker.internal:8080
+      PLUGIN_ADDR: ":50051"
+      # URL Core uses to reach this plugin. Must be resolvable from Core.
+      PLUGIN_BASE_URL: http://identity:50051
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  identity_pgdata:
