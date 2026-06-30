@@ -6,6 +6,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// Branch is the predicate function for branch builders.
+type Branch func(*sql.Selector)
+
 // PluginInstall is the predicate function for plugininstall builders.
 type PluginInstall func(*sql.Selector)
 
@@ -14,6 +17,12 @@ type PluginMigrationHistory func(*sql.Selector)
 
 // RefreshToken is the predicate function for refreshtoken builders.
 type RefreshToken func(*sql.Selector)
+
+// Role is the predicate function for role builders.
+type Role func(*sql.Selector)
+
+// RolePermission is the predicate function for rolepermission builders.
+type RolePermission func(*sql.Selector)
 
 // Tenant is the predicate function for tenant builders.
 type Tenant func(*sql.Selector)

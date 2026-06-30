@@ -58,16 +58,44 @@ func (tuu *TenantUserUpdate) SetNillableTenantID(s *string) *TenantUserUpdate {
 	return tuu
 }
 
-// SetRole sets the "role" field.
-func (tuu *TenantUserUpdate) SetRole(s string) *TenantUserUpdate {
-	tuu.mutation.SetRole(s)
+// SetBranchID sets the "branch_id" field.
+func (tuu *TenantUserUpdate) SetBranchID(s string) *TenantUserUpdate {
+	tuu.mutation.SetBranchID(s)
 	return tuu
 }
 
-// SetNillableRole sets the "role" field if the given value is not nil.
-func (tuu *TenantUserUpdate) SetNillableRole(s *string) *TenantUserUpdate {
+// SetNillableBranchID sets the "branch_id" field if the given value is not nil.
+func (tuu *TenantUserUpdate) SetNillableBranchID(s *string) *TenantUserUpdate {
 	if s != nil {
-		tuu.SetRole(*s)
+		tuu.SetBranchID(*s)
+	}
+	return tuu
+}
+
+// SetRoleID sets the "role_id" field.
+func (tuu *TenantUserUpdate) SetRoleID(s string) *TenantUserUpdate {
+	tuu.mutation.SetRoleID(s)
+	return tuu
+}
+
+// SetNillableRoleID sets the "role_id" field if the given value is not nil.
+func (tuu *TenantUserUpdate) SetNillableRoleID(s *string) *TenantUserUpdate {
+	if s != nil {
+		tuu.SetRoleID(*s)
+	}
+	return tuu
+}
+
+// SetIsDefault sets the "is_default" field.
+func (tuu *TenantUserUpdate) SetIsDefault(b bool) *TenantUserUpdate {
+	tuu.mutation.SetIsDefault(b)
+	return tuu
+}
+
+// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
+func (tuu *TenantUserUpdate) SetNillableIsDefault(b *bool) *TenantUserUpdate {
+	if b != nil {
+		tuu.SetIsDefault(*b)
 	}
 	return tuu
 }
@@ -149,8 +177,14 @@ func (tuu *TenantUserUpdate) sqlSave(ctx context.Context) (n int, err error) {
 			}
 		}
 	}
-	if value, ok := tuu.mutation.Role(); ok {
-		_spec.SetField(tenantuser.FieldRole, field.TypeString, value)
+	if value, ok := tuu.mutation.BranchID(); ok {
+		_spec.SetField(tenantuser.FieldBranchID, field.TypeString, value)
+	}
+	if value, ok := tuu.mutation.RoleID(); ok {
+		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
+	}
+	if value, ok := tuu.mutation.IsDefault(); ok {
+		_spec.SetField(tenantuser.FieldIsDefault, field.TypeBool, value)
 	}
 	if tuu.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -264,16 +298,44 @@ func (tuuo *TenantUserUpdateOne) SetNillableTenantID(s *string) *TenantUserUpdat
 	return tuuo
 }
 
-// SetRole sets the "role" field.
-func (tuuo *TenantUserUpdateOne) SetRole(s string) *TenantUserUpdateOne {
-	tuuo.mutation.SetRole(s)
+// SetBranchID sets the "branch_id" field.
+func (tuuo *TenantUserUpdateOne) SetBranchID(s string) *TenantUserUpdateOne {
+	tuuo.mutation.SetBranchID(s)
 	return tuuo
 }
 
-// SetNillableRole sets the "role" field if the given value is not nil.
-func (tuuo *TenantUserUpdateOne) SetNillableRole(s *string) *TenantUserUpdateOne {
+// SetNillableBranchID sets the "branch_id" field if the given value is not nil.
+func (tuuo *TenantUserUpdateOne) SetNillableBranchID(s *string) *TenantUserUpdateOne {
 	if s != nil {
-		tuuo.SetRole(*s)
+		tuuo.SetBranchID(*s)
+	}
+	return tuuo
+}
+
+// SetRoleID sets the "role_id" field.
+func (tuuo *TenantUserUpdateOne) SetRoleID(s string) *TenantUserUpdateOne {
+	tuuo.mutation.SetRoleID(s)
+	return tuuo
+}
+
+// SetNillableRoleID sets the "role_id" field if the given value is not nil.
+func (tuuo *TenantUserUpdateOne) SetNillableRoleID(s *string) *TenantUserUpdateOne {
+	if s != nil {
+		tuuo.SetRoleID(*s)
+	}
+	return tuuo
+}
+
+// SetIsDefault sets the "is_default" field.
+func (tuuo *TenantUserUpdateOne) SetIsDefault(b bool) *TenantUserUpdateOne {
+	tuuo.mutation.SetIsDefault(b)
+	return tuuo
+}
+
+// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
+func (tuuo *TenantUserUpdateOne) SetNillableIsDefault(b *bool) *TenantUserUpdateOne {
+	if b != nil {
+		tuuo.SetIsDefault(*b)
 	}
 	return tuuo
 }
@@ -385,8 +447,14 @@ func (tuuo *TenantUserUpdateOne) sqlSave(ctx context.Context) (_node *TenantUser
 			}
 		}
 	}
-	if value, ok := tuuo.mutation.Role(); ok {
-		_spec.SetField(tenantuser.FieldRole, field.TypeString, value)
+	if value, ok := tuuo.mutation.BranchID(); ok {
+		_spec.SetField(tenantuser.FieldBranchID, field.TypeString, value)
+	}
+	if value, ok := tuuo.mutation.RoleID(); ok {
+		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
+	}
+	if value, ok := tuuo.mutation.IsDefault(); ok {
+		_spec.SetField(tenantuser.FieldIsDefault, field.TypeBool, value)
 	}
 	if tuuo.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

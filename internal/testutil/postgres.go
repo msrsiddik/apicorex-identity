@@ -17,6 +17,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/msrsiddik/apicorex-identity/ent"
 	"github.com/msrsiddik/apicorex-identity/ent/migrate"
+	"github.com/msrsiddik/apicorex-identity/internal/rbac"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -27,6 +28,7 @@ type PG struct {
 	DSN       string
 	DB        *sql.DB
 	EntClient *ent.Client
+	RBAC      *rbac.Store
 	container testcontainers.Container
 }
 
@@ -73,7 +75,12 @@ func NewPostgres(t *testing.T) *PG {
 		t.Fatalf("migrate shared schema: %v", err)
 	}
 
-	pg := &PG{DSN: dsn, DB: db, EntClient: entClient, container: container}
+	rbacStore := rbac.NewStore(entClient)
+	if _, err := rbacStore.SeedSystemRoles(ctx); err != nil {
+		t.Fatalf("seed system roles: %v", err)
+	}
+
+	pg := &PG{DSN: dsn, DB: db, EntClient: entClient, RBAC: rbacStore, container: container}
 	t.Cleanup(func() {
 		entClient.Close()
 		db.Close()

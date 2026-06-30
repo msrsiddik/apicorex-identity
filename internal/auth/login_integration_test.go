@@ -19,7 +19,7 @@ func (noopInstaller) InstallForNewTenant(context.Context, string, string) error 
 // registerTenant provisions a tenant + owner with the given slug/email.
 func registerTenant(t *testing.T, pg *testutil.PG, slug, email string) {
 	t.Helper()
-	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{})
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 	err := saga.Register(context.Background(), tenant.RegisterInput{
 		Slug: slug, Name: slug, Plan: "starter",
 		OwnerEmail: email, OwnerPassword: "secret123",
@@ -40,7 +40,7 @@ func TestLogin_Success(t *testing.T) {
 	register(t, pg)
 
 	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil)
+	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
 
 	res, err := svc.Login(context.Background(), auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "secret123",
@@ -58,7 +58,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 	register(t, pg)
 
 	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil)
+	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
 
 	if _, err := svc.Login(context.Background(), auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "wrong",
@@ -72,7 +72,7 @@ func TestLogin_RefreshRotates(t *testing.T) {
 	register(t, pg)
 
 	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil)
+	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
 
 	res, err := svc.Login(context.Background(), auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "secret123",
@@ -99,7 +99,7 @@ func TestLogin_MultiTenantRequiresSlug(t *testing.T) {
 	registerTenant(t, pg, "beta", "multi@x.com")
 
 	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil)
+	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
 
 	// no slug → chooser error with both tenants
 	_, err := svc.Login(context.Background(), auth.LoginInput{
@@ -125,7 +125,7 @@ func TestLoadProfile(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	registerTenant(t, pg, "acme", "owner@acme.com")
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", time.Minute), nil)
+	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", time.Minute), nil, pg.RBAC)
 
 	// the owner's user_id comes from the global users table
 	u, err := pg.EntClient.User.Query().Where(entuser.Email("owner@acme.com")).Only(context.Background())
@@ -149,7 +149,7 @@ func TestInstalledPlugins(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	registerTenant(t, pg, "acme", "owner@acme.com")
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", time.Minute), nil)
+	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", time.Minute), nil, pg.RBAC)
 
 	tn, _ := pg.EntClient.Tenant.Query().Only(context.Background())
 	plugins := svc.InstalledPlugins(context.Background(), tn.ID)

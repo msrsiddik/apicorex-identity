@@ -5,9 +5,11 @@ package ent
 import (
 	"time"
 
+	"github.com/msrsiddik/apicorex-identity/ent/branch"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
 	"github.com/msrsiddik/apicorex-identity/ent/pluginmigrationhistory"
 	"github.com/msrsiddik/apicorex-identity/ent/refreshtoken"
+	"github.com/msrsiddik/apicorex-identity/ent/role"
 	"github.com/msrsiddik/apicorex-identity/ent/schema"
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/ent/tenantuser"
@@ -19,6 +21,16 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	branchFields := schema.Branch{}.Fields()
+	_ = branchFields
+	// branchDescStatus is the schema descriptor for status field.
+	branchDescStatus := branchFields[4].Descriptor()
+	// branch.DefaultStatus holds the default value on creation for the status field.
+	branch.DefaultStatus = branchDescStatus.Default.(string)
+	// branchDescCreatedAt is the schema descriptor for created_at field.
+	branchDescCreatedAt := branchFields[5].Descriptor()
+	// branch.DefaultCreatedAt holds the default value on creation for the created_at field.
+	branch.DefaultCreatedAt = branchDescCreatedAt.Default.(func() time.Time)
 	plugininstallFields := schema.PluginInstall{}.Fields()
 	_ = plugininstallFields
 	// plugininstallDescInstalledAt is the schema descriptor for installed_at field.
@@ -46,13 +58,23 @@ func init() {
 	// refreshtoken.TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
 	refreshtoken.TenantIDValidator = refreshtokenDescTenantID.Validators[0].(func(string) error)
 	// refreshtokenDescRevoked is the schema descriptor for revoked field.
-	refreshtokenDescRevoked := refreshtokenFields[4].Descriptor()
+	refreshtokenDescRevoked := refreshtokenFields[5].Descriptor()
 	// refreshtoken.DefaultRevoked holds the default value on creation for the revoked field.
 	refreshtoken.DefaultRevoked = refreshtokenDescRevoked.Default.(bool)
 	// refreshtokenDescCreatedAt is the schema descriptor for created_at field.
-	refreshtokenDescCreatedAt := refreshtokenFields[5].Descriptor()
+	refreshtokenDescCreatedAt := refreshtokenFields[6].Descriptor()
 	// refreshtoken.DefaultCreatedAt holds the default value on creation for the created_at field.
 	refreshtoken.DefaultCreatedAt = refreshtokenDescCreatedAt.Default.(func() time.Time)
+	roleFields := schema.Role{}.Fields()
+	_ = roleFields
+	// roleDescIsSystem is the schema descriptor for is_system field.
+	roleDescIsSystem := roleFields[4].Descriptor()
+	// role.DefaultIsSystem holds the default value on creation for the is_system field.
+	role.DefaultIsSystem = roleDescIsSystem.Default.(bool)
+	// roleDescCreatedAt is the schema descriptor for created_at field.
+	roleDescCreatedAt := roleFields[5].Descriptor()
+	// role.DefaultCreatedAt holds the default value on creation for the created_at field.
+	role.DefaultCreatedAt = roleDescCreatedAt.Default.(func() time.Time)
 	tenantFields := schema.Tenant{}.Fields()
 	_ = tenantFields
 	// tenantDescPlan is the schema descriptor for plan field.
@@ -65,12 +87,12 @@ func init() {
 	tenant.DefaultStatus = tenantDescStatus.Default.(string)
 	tenantuserFields := schema.TenantUser{}.Fields()
 	_ = tenantuserFields
-	// tenantuserDescRole is the schema descriptor for role field.
-	tenantuserDescRole := tenantuserFields[3].Descriptor()
-	// tenantuser.DefaultRole holds the default value on creation for the role field.
-	tenantuser.DefaultRole = tenantuserDescRole.Default.(string)
+	// tenantuserDescIsDefault is the schema descriptor for is_default field.
+	tenantuserDescIsDefault := tenantuserFields[5].Descriptor()
+	// tenantuser.DefaultIsDefault holds the default value on creation for the is_default field.
+	tenantuser.DefaultIsDefault = tenantuserDescIsDefault.Default.(bool)
 	// tenantuserDescCreatedAt is the schema descriptor for created_at field.
-	tenantuserDescCreatedAt := tenantuserFields[4].Descriptor()
+	tenantuserDescCreatedAt := tenantuserFields[6].Descriptor()
 	// tenantuser.DefaultCreatedAt holds the default value on creation for the created_at field.
 	tenantuser.DefaultCreatedAt = tenantuserDescCreatedAt.Default.(func() time.Time)
 	userFields := schema.User{}.Fields()

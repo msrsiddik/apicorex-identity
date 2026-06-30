@@ -10,6 +10,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/msrsiddik/apicorex-identity/ent/branch"
 	"github.com/msrsiddik/apicorex-identity/ent/internal"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
 	"github.com/msrsiddik/apicorex-identity/ent/predicate"
@@ -130,6 +131,21 @@ func (tu *TenantUpdate) AddPluginInstalls(p ...*PluginInstall) *TenantUpdate {
 	return tu.AddPluginInstallIDs(ids...)
 }
 
+// AddBranchIDs adds the "branches" edge to the Branch entity by IDs.
+func (tu *TenantUpdate) AddBranchIDs(ids ...string) *TenantUpdate {
+	tu.mutation.AddBranchIDs(ids...)
+	return tu
+}
+
+// AddBranches adds the "branches" edges to the Branch entity.
+func (tu *TenantUpdate) AddBranches(b ...*Branch) *TenantUpdate {
+	ids := make([]string, len(b))
+	for i := range b {
+		ids[i] = b[i].ID
+	}
+	return tu.AddBranchIDs(ids...)
+}
+
 // Mutation returns the TenantMutation object of the builder.
 func (tu *TenantUpdate) Mutation() *TenantMutation {
 	return tu.mutation
@@ -175,6 +191,27 @@ func (tu *TenantUpdate) RemovePluginInstalls(p ...*PluginInstall) *TenantUpdate 
 		ids[i] = p[i].ID
 	}
 	return tu.RemovePluginInstallIDs(ids...)
+}
+
+// ClearBranches clears all "branches" edges to the Branch entity.
+func (tu *TenantUpdate) ClearBranches() *TenantUpdate {
+	tu.mutation.ClearBranches()
+	return tu
+}
+
+// RemoveBranchIDs removes the "branches" edge to Branch entities by IDs.
+func (tu *TenantUpdate) RemoveBranchIDs(ids ...string) *TenantUpdate {
+	tu.mutation.RemoveBranchIDs(ids...)
+	return tu
+}
+
+// RemoveBranches removes "branches" edges to Branch entities.
+func (tu *TenantUpdate) RemoveBranches(b ...*Branch) *TenantUpdate {
+	ids := make([]string, len(b))
+	for i := range b {
+		ids[i] = b[i].ID
+	}
+	return tu.RemoveBranchIDs(ids...)
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
@@ -324,6 +361,54 @@ func (tu *TenantUpdate) sqlSave(ctx context.Context) (n int, err error) {
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if tu.mutation.BranchesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tu.schemaConfig.Branch
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := tu.mutation.RemovedBranchesIDs(); len(nodes) > 0 && !tu.mutation.BranchesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tu.schemaConfig.Branch
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := tu.mutation.BranchesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tu.schemaConfig.Branch
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	_spec.Node.Schema = tu.schemaConfig.Tenant
 	ctx = internal.NewSchemaConfigContext(ctx, tu.schemaConfig)
 	if n, err = sqlgraph.UpdateNodes(ctx, tu.driver, _spec); err != nil {
@@ -446,6 +531,21 @@ func (tuo *TenantUpdateOne) AddPluginInstalls(p ...*PluginInstall) *TenantUpdate
 	return tuo.AddPluginInstallIDs(ids...)
 }
 
+// AddBranchIDs adds the "branches" edge to the Branch entity by IDs.
+func (tuo *TenantUpdateOne) AddBranchIDs(ids ...string) *TenantUpdateOne {
+	tuo.mutation.AddBranchIDs(ids...)
+	return tuo
+}
+
+// AddBranches adds the "branches" edges to the Branch entity.
+func (tuo *TenantUpdateOne) AddBranches(b ...*Branch) *TenantUpdateOne {
+	ids := make([]string, len(b))
+	for i := range b {
+		ids[i] = b[i].ID
+	}
+	return tuo.AddBranchIDs(ids...)
+}
+
 // Mutation returns the TenantMutation object of the builder.
 func (tuo *TenantUpdateOne) Mutation() *TenantMutation {
 	return tuo.mutation
@@ -491,6 +591,27 @@ func (tuo *TenantUpdateOne) RemovePluginInstalls(p ...*PluginInstall) *TenantUpd
 		ids[i] = p[i].ID
 	}
 	return tuo.RemovePluginInstallIDs(ids...)
+}
+
+// ClearBranches clears all "branches" edges to the Branch entity.
+func (tuo *TenantUpdateOne) ClearBranches() *TenantUpdateOne {
+	tuo.mutation.ClearBranches()
+	return tuo
+}
+
+// RemoveBranchIDs removes the "branches" edge to Branch entities by IDs.
+func (tuo *TenantUpdateOne) RemoveBranchIDs(ids ...string) *TenantUpdateOne {
+	tuo.mutation.RemoveBranchIDs(ids...)
+	return tuo
+}
+
+// RemoveBranches removes "branches" edges to Branch entities.
+func (tuo *TenantUpdateOne) RemoveBranches(b ...*Branch) *TenantUpdateOne {
+	ids := make([]string, len(b))
+	for i := range b {
+		ids[i] = b[i].ID
+	}
+	return tuo.RemoveBranchIDs(ids...)
 }
 
 // Where appends a list predicates to the TenantUpdate builder.
@@ -665,6 +786,54 @@ func (tuo *TenantUpdateOne) sqlSave(ctx context.Context) (_node *Tenant, err err
 			},
 		}
 		edge.Schema = tuo.schemaConfig.PluginInstall
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if tuo.mutation.BranchesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tuo.schemaConfig.Branch
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := tuo.mutation.RemovedBranchesIDs(); len(nodes) > 0 && !tuo.mutation.BranchesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tuo.schemaConfig.Branch
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := tuo.mutation.BranchesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tuo.schemaConfig.Branch
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}

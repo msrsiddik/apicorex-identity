@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/msrsiddik/apicorex-identity/ent"
 	entuser "github.com/msrsiddik/apicorex-identity/ent/user"
+	"github.com/msrsiddik/apicorex-identity/internal/rbac"
 	"github.com/msrsiddik/apicorex-identity/internal/tenantclient"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -61,12 +62,13 @@ type Saga struct {
 	db        *sql.DB
 	dsn       string
 	installer PluginInstaller
+	rbac      *rbac.Store
 }
 
 // NewSaga returns a registration Saga. dsn is the database URL, used to open the
 // per-tenant schema connection for migrations.
-func NewSaga(entClient *ent.Client, db *sql.DB, dsn string, installer PluginInstaller) *Saga {
-	return &Saga{entClient: entClient, db: db, dsn: dsn, installer: installer}
+func NewSaga(entClient *ent.Client, db *sql.DB, dsn string, installer PluginInstaller, rbacStore *rbac.Store) *Saga {
+	return &Saga{entClient: entClient, db: db, dsn: dsn, installer: installer, rbac: rbacStore}
 }
 
 // Register provisions a new tenant and owner. On any step failure it compensates
@@ -97,6 +99,23 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 		return s.entClient.Tenant.DeleteOneID(t.ID).Exec(ctx)
 	})
 
+	// Step 1b: default branch (shared.branches). Every tenant has at least one
+	// branch ("main"); membership and login are branch-scoped.
+	branchID := "br_" + uuid.New().String()[:8]
+	if _, err := s.entClient.Branch.Create().
+		SetID(branchID).
+		SetTenantID(t.ID).
+		SetSlug("main").
+		SetName("Main").
+		SetStatus("active").
+		Save(ctx); err != nil {
+		s.compensate(ctx, steps)
+		return fmt.Errorf("step1b create default branch: %w", err)
+	}
+	steps = append(steps, func(ctx context.Context) error {
+		return s.entClient.Branch.DeleteOneID(branchID).Exec(ctx)
+	})
+
 	// Step 2: resolve the global user (shared.users). Reuse if the email already
 	// exists (multi-tenant join); otherwise hash the password once and create it.
 	userID, createdUser, err := s.resolveUser(ctx, in.OwnerEmail, in.OwnerPassword)
@@ -110,13 +129,21 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 		})
 	}
 
-	// Step 2b: membership mapping (shared.tenant_users), role owner.
+	// Step 2b: membership mapping (shared.tenant_users), owner role, scoped to
+	// the default branch and flagged as the user's default landing branch.
+	ownerRoleID, err := s.rbac.SystemRoleID(ctx, "owner")
+	if err != nil {
+		s.compensate(ctx, steps)
+		return fmt.Errorf("step2b resolve owner role: %w", err)
+	}
 	tuID := "tu_" + uuid.New().String()[:8]
 	if _, err := s.entClient.TenantUser.Create().
 		SetID(tuID).
 		SetUserID(userID).
 		SetTenantID(t.ID).
-		SetRole("owner").
+		SetBranchID(branchID).
+		SetIsDefault(true).
+		SetRoleID(ownerRoleID).
 		Save(ctx); err != nil {
 		s.compensate(ctx, steps)
 		return fmt.Errorf("step2b create membership: %w", err)

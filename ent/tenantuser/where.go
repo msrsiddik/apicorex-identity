@@ -76,9 +76,19 @@ func TenantID(v string) predicate.TenantUser {
 	return predicate.TenantUser(sql.FieldEQ(FieldTenantID, v))
 }
 
-// Role applies equality check predicate on the "role" field. It's identical to RoleEQ.
-func Role(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldEQ(FieldRole, v))
+// BranchID applies equality check predicate on the "branch_id" field. It's identical to BranchIDEQ.
+func BranchID(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEQ(FieldBranchID, v))
+}
+
+// RoleID applies equality check predicate on the "role_id" field. It's identical to RoleIDEQ.
+func RoleID(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEQ(FieldRoleID, v))
+}
+
+// IsDefault applies equality check predicate on the "is_default" field. It's identical to IsDefaultEQ.
+func IsDefault(v bool) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEQ(FieldIsDefault, v))
 }
 
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
@@ -216,69 +226,144 @@ func TenantIDContainsFold(v string) predicate.TenantUser {
 	return predicate.TenantUser(sql.FieldContainsFold(FieldTenantID, v))
 }
 
-// RoleEQ applies the EQ predicate on the "role" field.
-func RoleEQ(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldEQ(FieldRole, v))
+// BranchIDEQ applies the EQ predicate on the "branch_id" field.
+func BranchIDEQ(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEQ(FieldBranchID, v))
 }
 
-// RoleNEQ applies the NEQ predicate on the "role" field.
-func RoleNEQ(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldNEQ(FieldRole, v))
+// BranchIDNEQ applies the NEQ predicate on the "branch_id" field.
+func BranchIDNEQ(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldNEQ(FieldBranchID, v))
 }
 
-// RoleIn applies the In predicate on the "role" field.
-func RoleIn(vs ...string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldIn(FieldRole, vs...))
+// BranchIDIn applies the In predicate on the "branch_id" field.
+func BranchIDIn(vs ...string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldIn(FieldBranchID, vs...))
 }
 
-// RoleNotIn applies the NotIn predicate on the "role" field.
-func RoleNotIn(vs ...string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldNotIn(FieldRole, vs...))
+// BranchIDNotIn applies the NotIn predicate on the "branch_id" field.
+func BranchIDNotIn(vs ...string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldNotIn(FieldBranchID, vs...))
 }
 
-// RoleGT applies the GT predicate on the "role" field.
-func RoleGT(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldGT(FieldRole, v))
+// BranchIDGT applies the GT predicate on the "branch_id" field.
+func BranchIDGT(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldGT(FieldBranchID, v))
 }
 
-// RoleGTE applies the GTE predicate on the "role" field.
-func RoleGTE(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldGTE(FieldRole, v))
+// BranchIDGTE applies the GTE predicate on the "branch_id" field.
+func BranchIDGTE(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldGTE(FieldBranchID, v))
 }
 
-// RoleLT applies the LT predicate on the "role" field.
-func RoleLT(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldLT(FieldRole, v))
+// BranchIDLT applies the LT predicate on the "branch_id" field.
+func BranchIDLT(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldLT(FieldBranchID, v))
 }
 
-// RoleLTE applies the LTE predicate on the "role" field.
-func RoleLTE(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldLTE(FieldRole, v))
+// BranchIDLTE applies the LTE predicate on the "branch_id" field.
+func BranchIDLTE(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldLTE(FieldBranchID, v))
 }
 
-// RoleContains applies the Contains predicate on the "role" field.
-func RoleContains(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldContains(FieldRole, v))
+// BranchIDContains applies the Contains predicate on the "branch_id" field.
+func BranchIDContains(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldContains(FieldBranchID, v))
 }
 
-// RoleHasPrefix applies the HasPrefix predicate on the "role" field.
-func RoleHasPrefix(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldHasPrefix(FieldRole, v))
+// BranchIDHasPrefix applies the HasPrefix predicate on the "branch_id" field.
+func BranchIDHasPrefix(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldHasPrefix(FieldBranchID, v))
 }
 
-// RoleHasSuffix applies the HasSuffix predicate on the "role" field.
-func RoleHasSuffix(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldHasSuffix(FieldRole, v))
+// BranchIDHasSuffix applies the HasSuffix predicate on the "branch_id" field.
+func BranchIDHasSuffix(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldHasSuffix(FieldBranchID, v))
 }
 
-// RoleEqualFold applies the EqualFold predicate on the "role" field.
-func RoleEqualFold(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldEqualFold(FieldRole, v))
+// BranchIDEqualFold applies the EqualFold predicate on the "branch_id" field.
+func BranchIDEqualFold(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEqualFold(FieldBranchID, v))
 }
 
-// RoleContainsFold applies the ContainsFold predicate on the "role" field.
-func RoleContainsFold(v string) predicate.TenantUser {
-	return predicate.TenantUser(sql.FieldContainsFold(FieldRole, v))
+// BranchIDContainsFold applies the ContainsFold predicate on the "branch_id" field.
+func BranchIDContainsFold(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldContainsFold(FieldBranchID, v))
+}
+
+// RoleIDEQ applies the EQ predicate on the "role_id" field.
+func RoleIDEQ(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEQ(FieldRoleID, v))
+}
+
+// RoleIDNEQ applies the NEQ predicate on the "role_id" field.
+func RoleIDNEQ(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldNEQ(FieldRoleID, v))
+}
+
+// RoleIDIn applies the In predicate on the "role_id" field.
+func RoleIDIn(vs ...string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldIn(FieldRoleID, vs...))
+}
+
+// RoleIDNotIn applies the NotIn predicate on the "role_id" field.
+func RoleIDNotIn(vs ...string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldNotIn(FieldRoleID, vs...))
+}
+
+// RoleIDGT applies the GT predicate on the "role_id" field.
+func RoleIDGT(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldGT(FieldRoleID, v))
+}
+
+// RoleIDGTE applies the GTE predicate on the "role_id" field.
+func RoleIDGTE(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldGTE(FieldRoleID, v))
+}
+
+// RoleIDLT applies the LT predicate on the "role_id" field.
+func RoleIDLT(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldLT(FieldRoleID, v))
+}
+
+// RoleIDLTE applies the LTE predicate on the "role_id" field.
+func RoleIDLTE(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldLTE(FieldRoleID, v))
+}
+
+// RoleIDContains applies the Contains predicate on the "role_id" field.
+func RoleIDContains(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldContains(FieldRoleID, v))
+}
+
+// RoleIDHasPrefix applies the HasPrefix predicate on the "role_id" field.
+func RoleIDHasPrefix(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldHasPrefix(FieldRoleID, v))
+}
+
+// RoleIDHasSuffix applies the HasSuffix predicate on the "role_id" field.
+func RoleIDHasSuffix(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldHasSuffix(FieldRoleID, v))
+}
+
+// RoleIDEqualFold applies the EqualFold predicate on the "role_id" field.
+func RoleIDEqualFold(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEqualFold(FieldRoleID, v))
+}
+
+// RoleIDContainsFold applies the ContainsFold predicate on the "role_id" field.
+func RoleIDContainsFold(v string) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldContainsFold(FieldRoleID, v))
+}
+
+// IsDefaultEQ applies the EQ predicate on the "is_default" field.
+func IsDefaultEQ(v bool) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldEQ(FieldIsDefault, v))
+}
+
+// IsDefaultNEQ applies the NEQ predicate on the "is_default" field.
+func IsDefaultNEQ(v bool) predicate.TenantUser {
+	return predicate.TenantUser(sql.FieldNEQ(FieldIsDefault, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

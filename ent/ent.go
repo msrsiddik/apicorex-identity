@@ -12,9 +12,12 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/msrsiddik/apicorex-identity/ent/branch"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
 	"github.com/msrsiddik/apicorex-identity/ent/pluginmigrationhistory"
 	"github.com/msrsiddik/apicorex-identity/ent/refreshtoken"
+	"github.com/msrsiddik/apicorex-identity/ent/role"
+	"github.com/msrsiddik/apicorex-identity/ent/rolepermission"
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/ent/tenantuser"
 	"github.com/msrsiddik/apicorex-identity/ent/user"
@@ -79,9 +82,12 @@ var (
 func checkColumn(table, column string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
+			branch.Table:                 branch.ValidColumn,
 			plugininstall.Table:          plugininstall.ValidColumn,
 			pluginmigrationhistory.Table: pluginmigrationhistory.ValidColumn,
 			refreshtoken.Table:           refreshtoken.ValidColumn,
+			role.Table:                   role.ValidColumn,
+			rolepermission.Table:         rolepermission.ValidColumn,
 			tenant.Table:                 tenant.ValidColumn,
 			tenantuser.Table:             tenantuser.ValidColumn,
 			user.Table:                   user.ValidColumn,

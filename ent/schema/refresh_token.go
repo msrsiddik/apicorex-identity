@@ -24,6 +24,7 @@ func (RefreshToken) Fields() []ent.Field {
 		field.String("id").Unique().Immutable(),
 		field.String("user_id").NotEmpty(),
 		field.String("tenant_id").NotEmpty(),
+		field.String("branch_id").Optional(), // the branch the refreshed token stays scoped to
 		field.Time("expires_at"),
 		field.Bool("revoked").Default(false),
 		field.Time("created_at").Default(time.Now).Immutable(),

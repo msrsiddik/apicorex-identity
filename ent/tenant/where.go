@@ -472,6 +472,35 @@ func HasPluginInstallsWith(preds ...predicate.PluginInstall) predicate.Tenant {
 	})
 }
 
+// HasBranches applies the HasEdge predicate on the "branches" edge.
+func HasBranches() predicate.Tenant {
+	return predicate.Tenant(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, BranchesTable, BranchesColumn),
+		)
+		schemaConfig := internal.SchemaConfigFromContext(s.Context())
+		step.To.Schema = schemaConfig.Branch
+		step.Edge.Schema = schemaConfig.Branch
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasBranchesWith applies the HasEdge predicate on the "branches" edge with a given conditions (other predicates).
+func HasBranchesWith(preds ...predicate.Branch) predicate.Tenant {
+	return predicate.Tenant(func(s *sql.Selector) {
+		step := newBranchesStep()
+		schemaConfig := internal.SchemaConfigFromContext(s.Context())
+		step.To.Schema = schemaConfig.Branch
+		step.Edge.Schema = schemaConfig.Branch
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // And groups predicates with the AND operator between them.
 func And(predicates ...predicate.Tenant) predicate.Tenant {
 	return predicate.Tenant(sql.AndPredicates(predicates...))

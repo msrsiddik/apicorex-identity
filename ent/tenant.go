@@ -38,9 +38,11 @@ type TenantEdges struct {
 	TenantUsers []*TenantUser `json:"tenant_users,omitempty"`
 	// PluginInstalls holds the value of the plugin_installs edge.
 	PluginInstalls []*PluginInstall `json:"plugin_installs,omitempty"`
+	// Branches holds the value of the branches edge.
+	Branches []*Branch `json:"branches,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [2]bool
+	loadedTypes [3]bool
 }
 
 // TenantUsersOrErr returns the TenantUsers value or an error if the edge
@@ -59,6 +61,15 @@ func (e TenantEdges) PluginInstallsOrErr() ([]*PluginInstall, error) {
 		return e.PluginInstalls, nil
 	}
 	return nil, &NotLoadedError{edge: "plugin_installs"}
+}
+
+// BranchesOrErr returns the Branches value or an error if the edge
+// was not loaded in eager-loading.
+func (e TenantEdges) BranchesOrErr() ([]*Branch, error) {
+	if e.loadedTypes[2] {
+		return e.Branches, nil
+	}
+	return nil, &NotLoadedError{edge: "branches"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -140,6 +151,11 @@ func (t *Tenant) QueryTenantUsers() *TenantUserQuery {
 // QueryPluginInstalls queries the "plugin_installs" edge of the Tenant entity.
 func (t *Tenant) QueryPluginInstalls() *PluginInstallQuery {
 	return NewTenantClient(t.config).QueryPluginInstalls(t)
+}
+
+// QueryBranches queries the "branches" edge of the Tenant entity.
+func (t *Tenant) QueryBranches() *BranchQuery {
+	return NewTenantClient(t.config).QueryBranches(t)
 }
 
 // Update returns a builder for updating this Tenant.

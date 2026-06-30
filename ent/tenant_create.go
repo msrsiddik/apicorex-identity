@@ -9,6 +9,7 @@ import (
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/msrsiddik/apicorex-identity/ent/branch"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/ent/tenantuser"
@@ -101,6 +102,21 @@ func (tc *TenantCreate) AddPluginInstalls(p ...*PluginInstall) *TenantCreate {
 		ids[i] = p[i].ID
 	}
 	return tc.AddPluginInstallIDs(ids...)
+}
+
+// AddBranchIDs adds the "branches" edge to the Branch entity by IDs.
+func (tc *TenantCreate) AddBranchIDs(ids ...string) *TenantCreate {
+	tc.mutation.AddBranchIDs(ids...)
+	return tc
+}
+
+// AddBranches adds the "branches" edges to the Branch entity.
+func (tc *TenantCreate) AddBranches(b ...*Branch) *TenantCreate {
+	ids := make([]string, len(b))
+	for i := range b {
+		ids[i] = b[i].ID
+	}
+	return tc.AddBranchIDs(ids...)
 }
 
 // Mutation returns the TenantMutation object of the builder.
@@ -250,6 +266,23 @@ func (tc *TenantCreate) createSpec() (*Tenant, *sqlgraph.CreateSpec) {
 			},
 		}
 		edge.Schema = tc.schemaConfig.PluginInstall
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := tc.mutation.BranchesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   tenant.BranchesTable,
+			Columns: []string{tenant.BranchesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(branch.FieldID, field.TypeString),
+			},
+		}
+		edge.Schema = tc.schemaConfig.Branch
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}

@@ -18,8 +18,11 @@ type Claims struct {
 	TenantID   string   `json:"tenant_id"`
 	TenantSlug string   `json:"tenant_slug"`
 	SchemaName string   `json:"schema_name"`
-	UserType   string   `json:"user_type"`
-	Roles      []string `json:"roles"`
+	BranchID   string   `json:"branch_id,omitempty"`
+	BranchSlug string   `json:"branch_slug,omitempty"`
+	UserType    string   `json:"user_type"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions,omitempty"`
 	jwt.RegisteredClaims
 }
 

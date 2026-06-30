@@ -8,6 +8,41 @@ import (
 )
 
 var (
+	// BranchesColumns holds the columns for the "branches" table.
+	BranchesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "slug", Type: field.TypeString},
+		{Name: "name", Type: field.TypeString},
+		{Name: "status", Type: field.TypeString, Default: "active"},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "tenant_id", Type: field.TypeString},
+	}
+	// BranchesTable holds the schema information for the "branches" table.
+	BranchesTable = &schema.Table{
+		Name:       "branches",
+		Columns:    BranchesColumns,
+		PrimaryKey: []*schema.Column{BranchesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "branches_tenants_branches",
+				Columns:    []*schema.Column{BranchesColumns[5]},
+				RefColumns: []*schema.Column{TenantsColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "branch_tenant_id_slug",
+				Unique:  true,
+				Columns: []*schema.Column{BranchesColumns[5], BranchesColumns[1]},
+			},
+			{
+				Name:    "branch_tenant_id",
+				Unique:  false,
+				Columns: []*schema.Column{BranchesColumns[5]},
+			},
+		},
+	}
 	// PluginInstallsColumns holds the columns for the "plugin_installs" table.
 	PluginInstallsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -51,6 +86,7 @@ var (
 		{Name: "id", Type: field.TypeString, Unique: true},
 		{Name: "user_id", Type: field.TypeString},
 		{Name: "tenant_id", Type: field.TypeString},
+		{Name: "branch_id", Type: field.TypeString, Nullable: true},
 		{Name: "expires_at", Type: field.TypeTime},
 		{Name: "revoked", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
@@ -60,6 +96,55 @@ var (
 		Name:       "refresh_tokens",
 		Columns:    RefreshTokensColumns,
 		PrimaryKey: []*schema.Column{RefreshTokensColumns[0]},
+	}
+	// RolesColumns holds the columns for the "roles" table.
+	RolesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Nullable: true},
+		{Name: "slug", Type: field.TypeString},
+		{Name: "name", Type: field.TypeString},
+		{Name: "is_system", Type: field.TypeBool, Default: false},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// RolesTable holds the schema information for the "roles" table.
+	RolesTable = &schema.Table{
+		Name:       "roles",
+		Columns:    RolesColumns,
+		PrimaryKey: []*schema.Column{RolesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "role_tenant_id_slug",
+				Unique:  true,
+				Columns: []*schema.Column{RolesColumns[1], RolesColumns[2]},
+			},
+		},
+	}
+	// RolePermissionsColumns holds the columns for the "role_permissions" table.
+	RolePermissionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "permission", Type: field.TypeString},
+		{Name: "role_id", Type: field.TypeString},
+	}
+	// RolePermissionsTable holds the schema information for the "role_permissions" table.
+	RolePermissionsTable = &schema.Table{
+		Name:       "role_permissions",
+		Columns:    RolePermissionsColumns,
+		PrimaryKey: []*schema.Column{RolePermissionsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "role_permissions_roles_permissions",
+				Columns:    []*schema.Column{RolePermissionsColumns[2]},
+				RefColumns: []*schema.Column{RolesColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "rolepermission_role_id_permission",
+				Unique:  true,
+				Columns: []*schema.Column{RolePermissionsColumns[2], RolePermissionsColumns[1]},
+			},
+		},
 	}
 	// TenantsColumns holds the columns for the "tenants" table.
 	TenantsColumns = []*schema.Column{
@@ -79,7 +164,9 @@ var (
 	// TenantUsersColumns holds the columns for the "tenant_users" table.
 	TenantUsersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "role", Type: field.TypeString, Default: "member"},
+		{Name: "branch_id", Type: field.TypeString},
+		{Name: "role_id", Type: field.TypeString},
+		{Name: "is_default", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "tenant_id", Type: field.TypeString},
 		{Name: "user_id", Type: field.TypeString},
@@ -92,27 +179,32 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "tenant_users_tenants_tenant_users",
-				Columns:    []*schema.Column{TenantUsersColumns[3]},
+				Columns:    []*schema.Column{TenantUsersColumns[5]},
 				RefColumns: []*schema.Column{TenantsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "tenant_users_users_tenant_users",
-				Columns:    []*schema.Column{TenantUsersColumns[4]},
+				Columns:    []*schema.Column{TenantUsersColumns[6]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 		},
 		Indexes: []*schema.Index{
 			{
-				Name:    "tenantuser_user_id_tenant_id",
+				Name:    "tenantuser_user_id_tenant_id_branch_id",
 				Unique:  true,
-				Columns: []*schema.Column{TenantUsersColumns[4], TenantUsersColumns[3]},
+				Columns: []*schema.Column{TenantUsersColumns[6], TenantUsersColumns[5], TenantUsersColumns[1]},
+			},
+			{
+				Name:    "tenantuser_user_id_tenant_id",
+				Unique:  false,
+				Columns: []*schema.Column{TenantUsersColumns[6], TenantUsersColumns[5]},
 			},
 			{
 				Name:    "tenantuser_tenant_id",
 				Unique:  false,
-				Columns: []*schema.Column{TenantUsersColumns[3]},
+				Columns: []*schema.Column{TenantUsersColumns[5]},
 			},
 		},
 	}
@@ -147,9 +239,12 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		BranchesTable,
 		PluginInstallsTable,
 		PluginMigrationHistoriesTable,
 		RefreshTokensTable,
+		RolesTable,
+		RolePermissionsTable,
 		TenantsTable,
 		TenantUsersTable,
 		UsersTable,
@@ -158,7 +253,9 @@ var (
 )
 
 func init() {
+	BranchesTable.ForeignKeys[0].RefTable = TenantsTable
 	PluginInstallsTable.ForeignKeys[0].RefTable = TenantsTable
+	RolePermissionsTable.ForeignKeys[0].RefTable = RolesTable
 	TenantUsersTable.ForeignKeys[0].RefTable = TenantsTable
 	TenantUsersTable.ForeignKeys[1].RefTable = UsersTable
 }

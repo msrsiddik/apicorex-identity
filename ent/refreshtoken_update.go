@@ -57,6 +57,26 @@ func (rtu *RefreshTokenUpdate) SetNillableTenantID(s *string) *RefreshTokenUpdat
 	return rtu
 }
 
+// SetBranchID sets the "branch_id" field.
+func (rtu *RefreshTokenUpdate) SetBranchID(s string) *RefreshTokenUpdate {
+	rtu.mutation.SetBranchID(s)
+	return rtu
+}
+
+// SetNillableBranchID sets the "branch_id" field if the given value is not nil.
+func (rtu *RefreshTokenUpdate) SetNillableBranchID(s *string) *RefreshTokenUpdate {
+	if s != nil {
+		rtu.SetBranchID(*s)
+	}
+	return rtu
+}
+
+// ClearBranchID clears the value of the "branch_id" field.
+func (rtu *RefreshTokenUpdate) ClearBranchID() *RefreshTokenUpdate {
+	rtu.mutation.ClearBranchID()
+	return rtu
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (rtu *RefreshTokenUpdate) SetExpiresAt(t time.Time) *RefreshTokenUpdate {
 	rtu.mutation.SetExpiresAt(t)
@@ -150,6 +170,12 @@ func (rtu *RefreshTokenUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := rtu.mutation.TenantID(); ok {
 		_spec.SetField(refreshtoken.FieldTenantID, field.TypeString, value)
 	}
+	if value, ok := rtu.mutation.BranchID(); ok {
+		_spec.SetField(refreshtoken.FieldBranchID, field.TypeString, value)
+	}
+	if rtu.mutation.BranchIDCleared() {
+		_spec.ClearField(refreshtoken.FieldBranchID, field.TypeString)
+	}
 	if value, ok := rtu.mutation.ExpiresAt(); ok {
 		_spec.SetField(refreshtoken.FieldExpiresAt, field.TypeTime, value)
 	}
@@ -203,6 +229,26 @@ func (rtuo *RefreshTokenUpdateOne) SetNillableTenantID(s *string) *RefreshTokenU
 	if s != nil {
 		rtuo.SetTenantID(*s)
 	}
+	return rtuo
+}
+
+// SetBranchID sets the "branch_id" field.
+func (rtuo *RefreshTokenUpdateOne) SetBranchID(s string) *RefreshTokenUpdateOne {
+	rtuo.mutation.SetBranchID(s)
+	return rtuo
+}
+
+// SetNillableBranchID sets the "branch_id" field if the given value is not nil.
+func (rtuo *RefreshTokenUpdateOne) SetNillableBranchID(s *string) *RefreshTokenUpdateOne {
+	if s != nil {
+		rtuo.SetBranchID(*s)
+	}
+	return rtuo
+}
+
+// ClearBranchID clears the value of the "branch_id" field.
+func (rtuo *RefreshTokenUpdateOne) ClearBranchID() *RefreshTokenUpdateOne {
+	rtuo.mutation.ClearBranchID()
 	return rtuo
 }
 
@@ -328,6 +374,12 @@ func (rtuo *RefreshTokenUpdateOne) sqlSave(ctx context.Context) (_node *RefreshT
 	}
 	if value, ok := rtuo.mutation.TenantID(); ok {
 		_spec.SetField(refreshtoken.FieldTenantID, field.TypeString, value)
+	}
+	if value, ok := rtuo.mutation.BranchID(); ok {
+		_spec.SetField(refreshtoken.FieldBranchID, field.TypeString, value)
+	}
+	if rtuo.mutation.BranchIDCleared() {
+		_spec.ClearField(refreshtoken.FieldBranchID, field.TypeString)
 	}
 	if value, ok := rtuo.mutation.ExpiresAt(); ok {
 		_spec.SetField(refreshtoken.FieldExpiresAt, field.TypeTime, value)

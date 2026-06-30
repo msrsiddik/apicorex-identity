@@ -17,6 +17,8 @@ const (
 	FieldUserID = "user_id"
 	// FieldTenantID holds the string denoting the tenant_id field in the database.
 	FieldTenantID = "tenant_id"
+	// FieldBranchID holds the string denoting the branch_id field in the database.
+	FieldBranchID = "branch_id"
 	// FieldExpiresAt holds the string denoting the expires_at field in the database.
 	FieldExpiresAt = "expires_at"
 	// FieldRevoked holds the string denoting the revoked field in the database.
@@ -32,6 +34,7 @@ var Columns = []string{
 	FieldID,
 	FieldUserID,
 	FieldTenantID,
+	FieldBranchID,
 	FieldExpiresAt,
 	FieldRevoked,
 	FieldCreatedAt,
@@ -74,6 +77,11 @@ func ByUserID(opts ...sql.OrderTermOption) OrderOption {
 // ByTenantID orders the results by the tenant_id field.
 func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
+}
+
+// ByBranchID orders the results by the branch_id field.
+func ByBranchID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBranchID, opts...).ToFunc()
 }
 
 // ByExpiresAt orders the results by the expires_at field.

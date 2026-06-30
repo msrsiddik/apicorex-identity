@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/msrsiddik/apicorex-identity/ent/branch"
 	"github.com/msrsiddik/apicorex-identity/ent/internal"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
 	"github.com/msrsiddik/apicorex-identity/ent/predicate"
@@ -28,6 +29,7 @@ type TenantQuery struct {
 	predicates         []predicate.Tenant
 	withTenantUsers    *TenantUserQuery
 	withPluginInstalls *PluginInstallQuery
+	withBranches       *BranchQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -108,6 +110,31 @@ func (tq *TenantQuery) QueryPluginInstalls() *PluginInstallQuery {
 		schemaConfig := tq.schemaConfig
 		step.To.Schema = schemaConfig.PluginInstall
 		step.Edge.Schema = schemaConfig.PluginInstall
+		fromU = sqlgraph.SetNeighbors(tq.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryBranches chains the current query on the "branches" edge.
+func (tq *TenantQuery) QueryBranches() *BranchQuery {
+	query := (&BranchClient{config: tq.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := tq.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := tq.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(tenant.Table, tenant.FieldID, selector),
+			sqlgraph.To(branch.Table, branch.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, tenant.BranchesTable, tenant.BranchesColumn),
+		)
+		schemaConfig := tq.schemaConfig
+		step.To.Schema = schemaConfig.Branch
+		step.Edge.Schema = schemaConfig.Branch
 		fromU = sqlgraph.SetNeighbors(tq.driver.Dialect(), step)
 		return fromU, nil
 	}
@@ -308,6 +335,7 @@ func (tq *TenantQuery) Clone() *TenantQuery {
 		predicates:         append([]predicate.Tenant{}, tq.predicates...),
 		withTenantUsers:    tq.withTenantUsers.Clone(),
 		withPluginInstalls: tq.withPluginInstalls.Clone(),
+		withBranches:       tq.withBranches.Clone(),
 		// clone intermediate query.
 		sql:  tq.sql.Clone(),
 		path: tq.path,
@@ -333,6 +361,17 @@ func (tq *TenantQuery) WithPluginInstalls(opts ...func(*PluginInstallQuery)) *Te
 		opt(query)
 	}
 	tq.withPluginInstalls = query
+	return tq
+}
+
+// WithBranches tells the query-builder to eager-load the nodes that are connected to
+// the "branches" edge. The optional arguments are used to configure the query builder of the edge.
+func (tq *TenantQuery) WithBranches(opts ...func(*BranchQuery)) *TenantQuery {
+	query := (&BranchClient{config: tq.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	tq.withBranches = query
 	return tq
 }
 
@@ -414,9 +453,10 @@ func (tq *TenantQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Tenan
 	var (
 		nodes       = []*Tenant{}
 		_spec       = tq.querySpec()
-		loadedTypes = [2]bool{
+		loadedTypes = [3]bool{
 			tq.withTenantUsers != nil,
 			tq.withPluginInstalls != nil,
+			tq.withBranches != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -450,6 +490,13 @@ func (tq *TenantQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Tenan
 		if err := tq.loadPluginInstalls(ctx, query, nodes,
 			func(n *Tenant) { n.Edges.PluginInstalls = []*PluginInstall{} },
 			func(n *Tenant, e *PluginInstall) { n.Edges.PluginInstalls = append(n.Edges.PluginInstalls, e) }); err != nil {
+			return nil, err
+		}
+	}
+	if query := tq.withBranches; query != nil {
+		if err := tq.loadBranches(ctx, query, nodes,
+			func(n *Tenant) { n.Edges.Branches = []*Branch{} },
+			func(n *Tenant, e *Branch) { n.Edges.Branches = append(n.Edges.Branches, e) }); err != nil {
 			return nil, err
 		}
 	}
@@ -501,6 +548,36 @@ func (tq *TenantQuery) loadPluginInstalls(ctx context.Context, query *PluginInst
 	}
 	query.Where(predicate.PluginInstall(func(s *sql.Selector) {
 		s.Where(sql.InValues(s.C(tenant.PluginInstallsColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.TenantID
+		node, ok := nodeids[fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "tenant_id" returned %v for node %v`, fk, n.ID)
+		}
+		assign(node, n)
+	}
+	return nil
+}
+func (tq *TenantQuery) loadBranches(ctx context.Context, query *BranchQuery, nodes []*Tenant, init func(*Tenant), assign func(*Tenant, *Branch)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[string]*Tenant)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+		if init != nil {
+			init(nodes[i])
+		}
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(branch.FieldTenantID)
+	}
+	query.Where(predicate.Branch(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(tenant.BranchesColumn), fks...))
 	}))
 	neighbors, err := query.All(ctx)
 	if err != nil {

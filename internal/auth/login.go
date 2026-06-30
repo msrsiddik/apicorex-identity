@@ -14,6 +14,7 @@ import (
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/ent/tenantuser"
 	entuser "github.com/msrsiddik/apicorex-identity/ent/user"
+	"github.com/msrsiddik/apicorex-identity/internal/rbac"
 	"github.com/msrsiddik/apicorex-identity/internal/tenantclient"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -60,12 +61,13 @@ type Service struct {
 	db        *sql.DB
 	issuer    *Issuer
 	denylist  *Denylist // optional (nil if REDIS_URL unset)
+	rbac      *rbac.Store
 }
 
 // NewService builds the auth Service. denylist may be nil to disable access-token
 // revocation on logout.
-func NewService(entClient *ent.Client, db *sql.DB, issuer *Issuer, denylist *Denylist) *Service {
-	return &Service{entClient: entClient, db: db, issuer: issuer, denylist: denylist}
+func NewService(entClient *ent.Client, db *sql.DB, issuer *Issuer, denylist *Denylist, rbacStore *rbac.Store) *Service {
+	return &Service{entClient: entClient, db: db, issuer: issuer, denylist: denylist, rbac: rbacStore}
 }
 
 // Login verifies the global credential (shared.users), resolves which tenant the
@@ -84,7 +86,9 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 
 	// 2. memberships
 	memberships, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID)).All(ctx)
+		Where(tenantuser.UserID(u.ID)).
+		Order(ent.Asc(tenantuser.FieldCreatedAt)).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load memberships: %w", err)
 	}
@@ -92,11 +96,10 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		return nil, errors.New("no tenant access")
 	}
 
-	// 3. pick the tenant
-	var (
-		t    *ent.Tenant
-		role string
-	)
+	// 3. pick the tenant. memberships may hold several rows per tenant (one per
+	// branch), so we resolve to a tenant first, then to its default branch.
+	var t *ent.Tenant
+	tenantIDs := distinctTenantIDs(memberships)
 	switch {
 	case in.Slug != "":
 		t, err = s.entClient.Tenant.Query().
@@ -104,22 +107,32 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		if err != nil {
 			return nil, errors.New("tenant not found")
 		}
-		m := findMembership(memberships, t.ID)
-		if m == nil {
+		if !contains(tenantIDs, t.ID) {
 			return nil, errors.New("no access to tenant")
 		}
-		role = m.Role
-	case len(memberships) == 1:
-		t, err = s.entClient.Tenant.Get(ctx, memberships[0].TenantID)
+	case len(tenantIDs) == 1:
+		t, err = s.entClient.Tenant.Get(ctx, tenantIDs[0])
 		if err != nil || t.Status != "active" {
 			return nil, errors.New("tenant not available")
 		}
-		role = memberships[0].Role
 	default:
-		return nil, s.multiTenantError(ctx, memberships)
+		return nil, s.multiTenantError(ctx, tenantIDs)
 	}
 
-	return s.issueTokens(ctx, u, t, role)
+	// 4. pick the branch within the tenant: the membership flagged is_default,
+	// else the first (oldest) membership for this tenant.
+	m := defaultMembership(memberships, t.ID)
+	if m == nil {
+		return nil, errors.New("no access to tenant")
+	}
+	var b *ent.Branch
+	if m.BranchID != "" {
+		if b, err = s.entClient.Branch.Get(ctx, m.BranchID); err != nil {
+			return nil, errors.New("branch not available")
+		}
+	}
+
+	return s.issueTokens(ctx, u, t, b, m.RoleID)
 }
 
 // Refresh exchanges a valid refresh token for a new token pair, rotating the
@@ -142,13 +155,26 @@ func (s *Service) Refresh(ctx context.Context, tokenID string) (*LoginResult, er
 		return nil, errors.New("user not found")
 	}
 
-	role := ""
-	if m, _ := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(t.ID)).Only(ctx); m != nil {
-		role = m.Role
+	// re-load the membership for this exact branch (falls back to any membership
+	// in the tenant if the token predates branches / branch_id is empty).
+	q := s.entClient.TenantUser.Query().
+		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(t.ID))
+	if rt.BranchID != "" {
+		q = q.Where(tenantuser.BranchID(rt.BranchID))
+	}
+	roleID := ""
+	if m, _ := q.First(ctx); m != nil {
+		roleID = m.RoleID
 	}
 
-	res, err := s.issueTokens(ctx, u, t, role)
+	var b *ent.Branch
+	if rt.BranchID != "" {
+		if b, err = s.entClient.Branch.Get(ctx, rt.BranchID); err != nil {
+			return nil, errors.New("branch not available")
+		}
+	}
+
+	res, err := s.issueTokens(ctx, u, t, b, roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -157,25 +183,38 @@ func (s *Service) Refresh(ctx context.Context, tokenID string) (*LoginResult, er
 	return res, nil
 }
 
-// issueTokens mints an access token (scoped to tenant t with role) plus a refresh token.
-func (s *Service) issueTokens(ctx context.Context, u *ent.User, t *ent.Tenant, role string) (*LoginResult, error) {
+// issueTokens mints an access token (scoped to tenant t / branch b with the
+// membership's role) plus a refresh token carrying the same branch. b may be nil
+// for a tenant-only token. roleID resolves to the role slug (Roles claim) and
+// its flattened permission set (Permissions claim).
+func (s *Service) issueTokens(ctx context.Context, u *ent.User, t *ent.Tenant, b *ent.Branch, roleID string) (*LoginResult, error) {
 	userType := "tenant_user"
 	if u.IsPlatformAdmin {
 		userType = "platform_admin"
 	}
-	roles := []string{}
-	if role != "" {
-		roles = []string{role}
+
+	roles, permissions, err := s.resolveRole(ctx, roleID)
+	if err != nil {
+		return nil, err
 	}
 
-	accessToken, err := s.issuer.Issue(Claims{
+	claims := Claims{
 		RegisteredClaims: jwtRegisteredClaims(u.ID),
 		TenantID:         t.ID,
 		TenantSlug:       t.Slug,
 		SchemaName:       t.SchemaName,
 		UserType:         userType,
 		Roles:            roles,
-	})
+		Permissions:      permissions,
+	}
+	branchID := ""
+	if b != nil {
+		claims.BranchID = b.ID
+		claims.BranchSlug = b.Slug
+		branchID = b.ID
+	}
+
+	accessToken, err := s.issuer.Issue(claims)
 	if err != nil {
 		return nil, fmt.Errorf("issue access token: %w", err)
 	}
@@ -184,6 +223,7 @@ func (s *Service) issueTokens(ctx context.Context, u *ent.User, t *ent.Tenant, r
 		SetID(uuid.New().String()).
 		SetUserID(u.ID).
 		SetTenantID(t.ID).
+		SetBranchID(branchID).
 		SetExpiresAt(time.Now().Add(refreshTokenTTL)).
 		Save(ctx)
 	if err != nil {
@@ -192,23 +232,74 @@ func (s *Service) issueTokens(ctx context.Context, u *ent.User, t *ent.Tenant, r
 	return &LoginResult{AccessToken: accessToken, RefreshToken: rt.ID}, nil
 }
 
-func (s *Service) multiTenantError(ctx context.Context, memberships []*ent.TenantUser) error {
-	opts := make([]TenantOption, 0, len(memberships))
-	for _, m := range memberships {
-		if t, err := s.entClient.Tenant.Get(ctx, m.TenantID); err == nil {
+// resolveRole turns a role_id into the role slug (Roles claim) and its flattened
+// permission set (Permissions claim). The baseline floor is always merged in, so
+// every authenticated user — even one whose role has no permissions, or no role
+// at all — holds at least the neutral read-only baseline.
+func (s *Service) resolveRole(ctx context.Context, roleID string) (roles, permissions []string, err error) {
+	if roleID == "" {
+		return []string{}, rbac.WithBaseline(nil), nil
+	}
+	r, err := s.entClient.Role.Get(ctx, roleID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load role: %w", err)
+	}
+	perms, err := s.rbac.Permissions(ctx, roleID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load permissions: %w", err)
+	}
+	return []string{r.Slug}, rbac.WithBaseline(perms), nil
+}
+
+func (s *Service) multiTenantError(ctx context.Context, tenantIDs []string) error {
+	opts := make([]TenantOption, 0, len(tenantIDs))
+	for _, id := range tenantIDs {
+		if t, err := s.entClient.Tenant.Get(ctx, id); err == nil {
 			opts = append(opts, TenantOption{Slug: t.Slug, Name: t.Name})
 		}
 	}
 	return &MultiTenantError{Tenants: opts}
 }
 
-func findMembership(ms []*ent.TenantUser, tenantID string) *ent.TenantUser {
+// distinctTenantIDs returns the unique tenant IDs across memberships, preserving
+// first-seen order (memberships may hold several branch rows per tenant).
+func distinctTenantIDs(ms []*ent.TenantUser) []string {
+	seen := make(map[string]bool, len(ms))
+	ids := make([]string, 0, len(ms))
 	for _, m := range ms {
-		if m.TenantID == tenantID {
-			return m
+		if !seen[m.TenantID] {
+			seen[m.TenantID] = true
+			ids = append(ids, m.TenantID)
 		}
 	}
-	return nil
+	return ids
+}
+
+func contains(ids []string, id string) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultMembership returns the membership a user lands on for a tenant: the one
+// flagged is_default, else the first membership for that tenant.
+func defaultMembership(ms []*ent.TenantUser, tenantID string) *ent.TenantUser {
+	var first *ent.TenantUser
+	for _, m := range ms {
+		if m.TenantID != tenantID {
+			continue
+		}
+		if m.IsDefault {
+			return m
+		}
+		if first == nil {
+			first = m
+		}
+	}
+	return first
 }
 
 // Profile holds the tenant-scoped PII returned by /me.

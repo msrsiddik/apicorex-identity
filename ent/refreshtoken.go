@@ -21,6 +21,8 @@ type RefreshToken struct {
 	UserID string `json:"user_id,omitempty"`
 	// TenantID holds the value of the "tenant_id" field.
 	TenantID string `json:"tenant_id,omitempty"`
+	// BranchID holds the value of the "branch_id" field.
+	BranchID string `json:"branch_id,omitempty"`
 	// ExpiresAt holds the value of the "expires_at" field.
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 	// Revoked holds the value of the "revoked" field.
@@ -37,7 +39,7 @@ func (*RefreshToken) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case refreshtoken.FieldRevoked:
 			values[i] = new(sql.NullBool)
-		case refreshtoken.FieldID, refreshtoken.FieldUserID, refreshtoken.FieldTenantID:
+		case refreshtoken.FieldID, refreshtoken.FieldUserID, refreshtoken.FieldTenantID, refreshtoken.FieldBranchID:
 			values[i] = new(sql.NullString)
 		case refreshtoken.FieldExpiresAt, refreshtoken.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -73,6 +75,12 @@ func (rt *RefreshToken) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
 			} else if value.Valid {
 				rt.TenantID = value.String
+			}
+		case refreshtoken.FieldBranchID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field branch_id", values[i])
+			} else if value.Valid {
+				rt.BranchID = value.String
 			}
 		case refreshtoken.FieldExpiresAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -133,6 +141,9 @@ func (rt *RefreshToken) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("tenant_id=")
 	builder.WriteString(rt.TenantID)
+	builder.WriteString(", ")
+	builder.WriteString("branch_id=")
+	builder.WriteString(rt.BranchID)
 	builder.WriteString(", ")
 	builder.WriteString("expires_at=")
 	builder.WriteString(rt.ExpiresAt.Format(time.ANSIC))

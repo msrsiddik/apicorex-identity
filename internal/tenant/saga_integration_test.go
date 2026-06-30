@@ -36,7 +36,7 @@ func TestSaga_Register(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	ctx := context.Background()
 
-	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{})
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 	if err := saga.Register(ctx, ownerInput("acme", "owner@acme.com")); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -59,14 +59,18 @@ func TestSaga_Register(t *testing.T) {
 		t.Fatalf("global user not found: %v", err)
 	}
 
-	// membership row with role owner (shared.tenant_users)
+	// membership row scoped to the owner system role (shared.tenant_users)
 	m, err := pg.EntClient.TenantUser.Query().
 		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(tn.ID)).Only(ctx)
 	if err != nil {
 		t.Fatalf("membership not found: %v", err)
 	}
-	if m.Role != "owner" {
-		t.Errorf("membership role = %q, want owner", m.Role)
+	r, err := pg.EntClient.Role.Get(ctx, m.RoleID)
+	if err != nil {
+		t.Fatalf("membership role not found: %v", err)
+	}
+	if r.Slug != "owner" {
+		t.Errorf("membership role = %q, want owner", r.Slug)
 	}
 
 	// PII profile created in the tenant schema, keyed by user_id (no password here)
@@ -84,7 +88,7 @@ func TestSaga_Register(t *testing.T) {
 func TestSaga_DuplicateSlugFails(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	ctx := context.Background()
-	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{})
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 
 	in := ownerInput("dup", "o@dup.com")
 	if err := saga.Register(ctx, in); err != nil {
@@ -100,7 +104,7 @@ func TestSaga_DuplicateSlugFails(t *testing.T) {
 func TestSaga_SameEmailDifferentTenant(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	ctx := context.Background()
-	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{})
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 
 	if err := saga.Register(ctx, ownerInput("first", "multi@x.com")); err != nil {
 		t.Fatalf("first register: %v", err)
@@ -128,7 +132,7 @@ func TestSaga_RollbackOnFailure(t *testing.T) {
 
 	// failingInstaller makes step 6 fail after tenant, user, membership, schema,
 	// and profile have been created — exercising full compensation.
-	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, failingInstaller{})
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, failingInstaller{}, pg.RBAC)
 	err := saga.Register(ctx, ownerInput("rollme", "rollback@x.com"))
 	if err == nil {
 		t.Fatal("expected Register to fail (installer boom)")
@@ -163,13 +167,13 @@ func TestSaga_RollbackKeepsExistingUser(t *testing.T) {
 	ctx := context.Background()
 
 	// first registration succeeds, creating the global user
-	ok := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{})
+	ok := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 	if err := ok.Register(ctx, ownerInput("first", "shared@x.com")); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
 
 	// second registration (same email) fails at step 6
-	bad := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, failingInstaller{})
+	bad := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, failingInstaller{}, pg.RBAC)
 	if err := bad.Register(ctx, ownerInput("second", "shared@x.com")); err == nil {
 		t.Fatal("expected second register to fail")
 	}

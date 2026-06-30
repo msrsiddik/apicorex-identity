@@ -74,6 +74,11 @@ func TenantID(v string) predicate.RefreshToken {
 	return predicate.RefreshToken(sql.FieldEQ(FieldTenantID, v))
 }
 
+// BranchID applies equality check predicate on the "branch_id" field. It's identical to BranchIDEQ.
+func BranchID(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldEQ(FieldBranchID, v))
+}
+
 // ExpiresAt applies equality check predicate on the "expires_at" field. It's identical to ExpiresAtEQ.
 func ExpiresAt(v time.Time) predicate.RefreshToken {
 	return predicate.RefreshToken(sql.FieldEQ(FieldExpiresAt, v))
@@ -217,6 +222,81 @@ func TenantIDEqualFold(v string) predicate.RefreshToken {
 // TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
 func TenantIDContainsFold(v string) predicate.RefreshToken {
 	return predicate.RefreshToken(sql.FieldContainsFold(FieldTenantID, v))
+}
+
+// BranchIDEQ applies the EQ predicate on the "branch_id" field.
+func BranchIDEQ(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldEQ(FieldBranchID, v))
+}
+
+// BranchIDNEQ applies the NEQ predicate on the "branch_id" field.
+func BranchIDNEQ(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldNEQ(FieldBranchID, v))
+}
+
+// BranchIDIn applies the In predicate on the "branch_id" field.
+func BranchIDIn(vs ...string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldIn(FieldBranchID, vs...))
+}
+
+// BranchIDNotIn applies the NotIn predicate on the "branch_id" field.
+func BranchIDNotIn(vs ...string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldNotIn(FieldBranchID, vs...))
+}
+
+// BranchIDGT applies the GT predicate on the "branch_id" field.
+func BranchIDGT(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldGT(FieldBranchID, v))
+}
+
+// BranchIDGTE applies the GTE predicate on the "branch_id" field.
+func BranchIDGTE(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldGTE(FieldBranchID, v))
+}
+
+// BranchIDLT applies the LT predicate on the "branch_id" field.
+func BranchIDLT(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldLT(FieldBranchID, v))
+}
+
+// BranchIDLTE applies the LTE predicate on the "branch_id" field.
+func BranchIDLTE(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldLTE(FieldBranchID, v))
+}
+
+// BranchIDContains applies the Contains predicate on the "branch_id" field.
+func BranchIDContains(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldContains(FieldBranchID, v))
+}
+
+// BranchIDHasPrefix applies the HasPrefix predicate on the "branch_id" field.
+func BranchIDHasPrefix(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldHasPrefix(FieldBranchID, v))
+}
+
+// BranchIDHasSuffix applies the HasSuffix predicate on the "branch_id" field.
+func BranchIDHasSuffix(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldHasSuffix(FieldBranchID, v))
+}
+
+// BranchIDIsNil applies the IsNil predicate on the "branch_id" field.
+func BranchIDIsNil() predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldIsNull(FieldBranchID))
+}
+
+// BranchIDNotNil applies the NotNil predicate on the "branch_id" field.
+func BranchIDNotNil() predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldNotNull(FieldBranchID))
+}
+
+// BranchIDEqualFold applies the EqualFold predicate on the "branch_id" field.
+func BranchIDEqualFold(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldEqualFold(FieldBranchID, v))
+}
+
+// BranchIDContainsFold applies the ContainsFold predicate on the "branch_id" field.
+func BranchIDContainsFold(v string) predicate.RefreshToken {
+	return predicate.RefreshToken(sql.FieldContainsFold(FieldBranchID, v))
 }
 
 // ExpiresAtEQ applies the EQ predicate on the "expires_at" field.

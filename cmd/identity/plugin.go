@@ -11,6 +11,7 @@ import (
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
 	"github.com/msrsiddik/apicorex-identity/internal/plugin"
 	"github.com/msrsiddik/apicorex-identity/internal/pluginmgr"
+	"github.com/msrsiddik/apicorex-identity/internal/rbac"
 	"github.com/msrsiddik/apicorex-identity/internal/tenant"
 	"github.com/oaswrap/spec/option"
 )
@@ -66,8 +67,11 @@ type MeResponse struct {
 	UserID           string   `json:"user_id"`
 	TenantID         string   `json:"tenant_id"`
 	TenantSlug       string   `json:"tenant_slug"`
+	BranchID         string   `json:"branch_id,omitempty"`
+	BranchSlug       string   `json:"branch_slug,omitempty"`
 	UserType         string   `json:"user_type"`
 	Roles            []string `json:"roles"`
+	Permissions      []string `json:"permissions"`
 	FullName         string   `json:"full_name,omitempty"`
 	Phone            string   `json:"phone,omitempty"`
 	JobTitle         string   `json:"job_title,omitempty"`
@@ -91,6 +95,68 @@ type UninstallPluginRequest struct {
 
 type UninstallPluginResponse struct {
 	Message string `json:"message" example:"plugin uninstalled"`
+}
+
+type CreateBranchRequest struct {
+	Slug string `json:"slug" example:"dhaka"`
+	Name string `json:"name" example:"Dhaka Office"`
+}
+
+type UpdateBranchRequest struct {
+	Name   string `json:"name"   example:"Dhaka HQ"`
+	Status string `json:"status" example:"archived"` // active | archived
+}
+
+type BranchResponse struct {
+	Branch auth.BranchInfo `json:"branch"`
+}
+
+type ListBranchesResponse struct {
+	Branches []auth.BranchInfo `json:"branches"`
+}
+
+type AddMemberRequest struct {
+	Email    string `json:"email"     example:"member@acme.com"`
+	Role     string `json:"role"      example:"member"`
+	Password string `json:"password"  example:"temp-pass-123"` // required only when the user is new
+	FullName string `json:"full_name" example:"New Member"`
+	Phone    string `json:"phone"     example:"+1-555-0101"`
+	JobTitle string `json:"job_title" example:"Staff"`
+}
+
+type AddMemberResponse struct {
+	Message string `json:"message" example:"member added"`
+}
+
+type SwitchBranchRequest struct {
+	BranchID string `json:"branch_id" example:"br_1a2b3c4d"`
+}
+
+type SetDefaultBranchRequest struct {
+	BranchID string `json:"branch_id" example:"br_1a2b3c4d"`
+}
+
+type MessageResponse struct {
+	Message string `json:"message"`
+}
+
+type CreateRoleRequest struct {
+	Slug        string   `json:"slug"        example:"auditor"`
+	Name        string   `json:"name"        example:"Auditor"`
+	Permissions []string `json:"permissions" example:"user:read,branch:read"`
+}
+
+type UpdateRoleRequest struct {
+	Name        string   `json:"name"`
+	Permissions []string `json:"permissions"`
+}
+
+type RoleResponse struct {
+	Role auth.RoleInfo `json:"role"`
+}
+
+type ListRolesResponse struct {
+	Roles []auth.RoleInfo `json:"roles"`
 }
 
 type ErrorResponse struct {
@@ -159,6 +225,97 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Request(new(UninstallPluginRequest)),
 		option.Response(http.StatusOK, new(UninstallPluginResponse)),
 	)
+
+	p.GET("/branches", h.listBranches,
+		option.Summary("List branches of the caller's tenant"),
+		option.Tags("branches"),
+		option.Response(http.StatusOK, new(ListBranchesResponse)),
+	)
+	p.POST("/branches", h.createBranch,
+		option.Summary("Create a branch in the caller's tenant"),
+		option.Description("Owner/admin only. Slug must be unique within the tenant."),
+		option.Tags("branches"),
+		option.Request(new(CreateBranchRequest)),
+		option.Response(http.StatusCreated, new(BranchResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+	p.Handle(http.MethodPatch, "/branches/:id", h.updateBranch,
+		option.Summary("Rename or archive a branch"),
+		option.Description("Owner/admin only."),
+		option.Tags("branches"),
+		option.Request(new(UpdateBranchRequest)),
+		option.Response(http.StatusOK, new(BranchResponse)),
+	)
+	p.POST("/branches/:id/members", h.addMember,
+		option.Summary("Add a user to a branch"),
+		option.Description("Owner/admin only. If the email has no global account, a new user is created (password required) along with a tenant PII profile; otherwise the existing user is reused."),
+		option.Tags("branches"),
+		option.Request(new(AddMemberRequest)),
+		option.Response(http.StatusOK, new(AddMemberResponse)),
+	)
+	p.POST("/branches/switch", h.switchBranch,
+		option.Summary("Switch the active branch"),
+		option.Description("Issues a fresh token pair scoped to another branch the caller belongs to in their current tenant."),
+		option.Tags("branches"),
+		option.Request(new(SwitchBranchRequest)),
+		option.Response(http.StatusOK, new(LoginResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+	p.POST("/branches/default", h.setDefaultBranch,
+		option.Summary("Set the caller's default branch"),
+		option.Description("The branch login lands on for this tenant going forward."),
+		option.Tags("branches"),
+		option.Request(new(SetDefaultBranchRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+
+	p.GET("/roles", h.listRoles,
+		option.Summary("List roles (system + tenant custom)"),
+		option.Tags("roles"),
+		option.Response(http.StatusOK, new(ListRolesResponse)),
+	)
+	p.POST("/roles", h.createRole,
+		option.Summary("Create a custom role"),
+		option.Tags("roles"),
+		option.Request(new(CreateRoleRequest)),
+		option.Response(http.StatusCreated, new(RoleResponse)),
+	)
+	p.Handle(http.MethodPatch, "/roles/:id", h.updateRole,
+		option.Summary("Update a custom role"),
+		option.Tags("roles"),
+		option.Request(new(UpdateRoleRequest)),
+		option.Response(http.StatusOK, new(RoleResponse)),
+	)
+	p.Handle(http.MethodDelete, "/roles/:id", h.deleteRole,
+		option.Summary("Delete a custom role"),
+		option.Tags("roles"),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+
+	// Route permissions — Core enforces these at the gateway before proxying.
+	p.RequirePermission(http.MethodGet, "/branches", rbac.PermBranchRead)
+	p.RequirePermission(http.MethodPost, "/branches", rbac.PermBranchWrite)
+	p.RequirePermission(http.MethodPatch, "/branches/:id", rbac.PermBranchManage)
+	p.RequirePermission(http.MethodPost, "/branches/:id/members", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodPost, "/plugins/install", rbac.PermPluginInstall)
+	p.RequirePermission(http.MethodPost, "/plugins/uninstall", rbac.PermPluginUninstall)
+	p.RequirePermission(http.MethodGet, "/roles", rbac.PermTenantManage)
+	p.RequirePermission(http.MethodPost, "/roles", rbac.PermTenantManage)
+	p.RequirePermission(http.MethodPatch, "/roles/:id", rbac.PermTenantManage)
+	p.RequirePermission(http.MethodDelete, "/roles/:id", rbac.PermTenantManage)
+	// /branches/switch and /branches/default act on the caller's own membership —
+	// any authenticated user may; no permission required.
+}
+
+// requirePerm aborts with 403 unless the caller holds perm. Defense-in-depth:
+// Core's gateway already enforces the route permission before proxying. Returns
+// true when allowed.
+func requirePerm(c *gin.Context, perm string) bool {
+	if plugin.HasPermission(c, perm) {
+		return true
+	}
+	c.JSON(http.StatusForbidden, ErrorResponse{Error: "missing permission: " + perm})
+	return false
 }
 
 func (h *handlers) register(c *gin.Context) {
@@ -246,8 +403,11 @@ func (h *handlers) me(c *gin.Context) {
 		UserID:           userID,
 		TenantID:         plugin.TenantID(c),
 		TenantSlug:       plugin.TenantSlug(c),
+		BranchID:         plugin.BranchID(c),
+		BranchSlug:       plugin.BranchSlug(c),
 		UserType:         plugin.UserType(c),
 		Roles:            plugin.Roles(c),
+		Permissions:      plugin.Permissions(c),
 		InstalledPlugins: h.authSvc.InstalledPlugins(c.Request.Context(), plugin.TenantID(c)),
 	}
 	// load PII profile from the tenant schema (best-effort)
@@ -312,6 +472,206 @@ func (h *handlers) uninstall(c *gin.Context) {
 		msg = "plugin uninstalled (data dropped)"
 	}
 	c.JSON(http.StatusOK, UninstallPluginResponse{Message: msg})
+}
+
+func (h *handlers) listBranches(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	branches, err := h.authSvc.ListBranches(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListBranchesResponse{Branches: branches})
+}
+
+func (h *handlers) createBranch(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermBranchWrite) {
+		return
+	}
+	var in CreateBranchRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	b, err := h.authSvc.CreateBranch(c.Request.Context(), tenantID, in.Slug, in.Name)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, BranchResponse{Branch: *b})
+}
+
+func (h *handlers) updateBranch(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermBranchManage) {
+		return
+	}
+	var in UpdateBranchRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	b, err := h.authSvc.UpdateBranch(c.Request.Context(), tenantID, c.Param("id"), in.Name, in.Status)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, BranchResponse{Branch: *b})
+}
+
+func (h *handlers) addMember(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserInvite) {
+		return
+	}
+	var in AddMemberRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if in.Email == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "email required"})
+		return
+	}
+	if err := h.authSvc.AddMember(c.Request.Context(), tenantID, c.Param("id"), auth.AddMemberInput{
+		Email: in.Email, Role: in.Role, Password: in.Password,
+		FullName: in.FullName, Phone: in.Phone, JobTitle: in.JobTitle,
+	}); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, AddMemberResponse{Message: "member added"})
+}
+
+func (h *handlers) switchBranch(c *gin.Context) {
+	userID, tenantID := plugin.UserID(c), plugin.TenantID(c)
+	if userID == "" || tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in SwitchBranchRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	res, err := h.authSvc.SwitchBranch(c.Request.Context(), userID, tenantID, in.BranchID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, LoginResponse{AccessToken: res.AccessToken, RefreshToken: res.RefreshToken})
+}
+
+func (h *handlers) setDefaultBranch(c *gin.Context) {
+	userID, tenantID := plugin.UserID(c), plugin.TenantID(c)
+	if userID == "" || tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in SetDefaultBranchRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if err := h.authSvc.SetDefaultBranch(c.Request.Context(), userID, tenantID, in.BranchID); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "default branch updated"})
+}
+
+func (h *handlers) listRoles(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermTenantManage) {
+		return
+	}
+	roles, err := h.authSvc.ListRoles(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListRolesResponse{Roles: roles})
+}
+
+func (h *handlers) createRole(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermTenantManage) {
+		return
+	}
+	var in CreateRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	r, err := h.authSvc.CreateRole(c.Request.Context(), tenantID, in.Slug, in.Name, in.Permissions)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, RoleResponse{Role: *r})
+}
+
+func (h *handlers) updateRole(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermTenantManage) {
+		return
+	}
+	var in UpdateRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	r, err := h.authSvc.UpdateRole(c.Request.Context(), tenantID, c.Param("id"), in.Name, in.Permissions)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, RoleResponse{Role: *r})
+}
+
+func (h *handlers) deleteRole(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermTenantManage) {
+		return
+	}
+	if err := h.authSvc.DeleteRole(c.Request.Context(), tenantID, c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "role deleted"})
 }
 
 // accessTokenJTIExp parses (without verifying — Core already verified) the bearer

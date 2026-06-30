@@ -18,8 +18,12 @@ const (
 	FieldUserID = "user_id"
 	// FieldTenantID holds the string denoting the tenant_id field in the database.
 	FieldTenantID = "tenant_id"
-	// FieldRole holds the string denoting the role field in the database.
-	FieldRole = "role"
+	// FieldBranchID holds the string denoting the branch_id field in the database.
+	FieldBranchID = "branch_id"
+	// FieldRoleID holds the string denoting the role_id field in the database.
+	FieldRoleID = "role_id"
+	// FieldIsDefault holds the string denoting the is_default field in the database.
+	FieldIsDefault = "is_default"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// EdgeUser holds the string denoting the user edge name in mutations.
@@ -49,7 +53,9 @@ var Columns = []string{
 	FieldID,
 	FieldUserID,
 	FieldTenantID,
-	FieldRole,
+	FieldBranchID,
+	FieldRoleID,
+	FieldIsDefault,
 	FieldCreatedAt,
 }
 
@@ -64,8 +70,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
-	// DefaultRole holds the default value on creation for the "role" field.
-	DefaultRole string
+	// DefaultIsDefault holds the default value on creation for the "is_default" field.
+	DefaultIsDefault bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
@@ -88,9 +94,19 @@ func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
-// ByRole orders the results by the role field.
-func ByRole(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRole, opts...).ToFunc()
+// ByBranchID orders the results by the branch_id field.
+func ByBranchID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBranchID, opts...).ToFunc()
+}
+
+// ByRoleID orders the results by the role_id field.
+func ByRoleID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRoleID, opts...).ToFunc()
+}
+
+// ByIsDefault orders the results by the is_default field.
+func ByIsDefault(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIsDefault, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

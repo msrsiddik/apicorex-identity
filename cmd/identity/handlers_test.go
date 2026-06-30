@@ -29,8 +29,8 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	pg := testutil.NewPostgres(t)
 
 	issuer := iauth.NewIssuer("test-secret", 15*time.Minute)
-	authSvc := iauth.NewService(pg.EntClient, pg.DB, issuer, nil)
-	saga := itenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{})
+	authSvc := iauth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	saga := itenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 	h := &handlers{authSvc: authSvc, saga: saga}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -40,6 +40,12 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	r.GET("/me", h.me)
 	r.POST("/plugins/install", h.install)
 	r.POST("/plugins/uninstall", h.uninstall)
+	r.GET("/branches", h.listBranches)
+	r.POST("/branches", h.createBranch)
+	r.PATCH("/branches/:id", h.updateBranch)
+	r.POST("/branches/:id/members", h.addMember)
+	r.GET("/roles", h.listRoles)
+	r.POST("/roles", h.createRole)
 	return r, h
 }
 
@@ -187,13 +193,14 @@ func TestHandler_Me(t *testing.T) {
 	// find the user_id to simulate Core's injected headers
 	u, _ := newUserID(t, r)
 
-	// /me with Core-injected headers → profile + role
+	// /me with Core-injected headers → profile + role + permissions
 	w := do(t, r, "GET", "/me", nil, map[string]string{
-		"X-ApiCoreX-User-ID":   u,
-		"X-ApiCoreX-Tenant-ID": "t_unused", // installed_plugins query tolerates missing
-		"X-ApiCoreX-Schema":    "tenant_acme",
-		"X-ApiCoreX-Roles":     "owner",
-		"X-ApiCoreX-User-Type": "tenant_user",
+		"X-ApiCoreX-User-ID":     u,
+		"X-ApiCoreX-Tenant-ID":   "t_unused", // installed_plugins query tolerates missing
+		"X-ApiCoreX-Schema":      "tenant_acme",
+		"X-ApiCoreX-Roles":       "owner",
+		"X-ApiCoreX-Permissions": "*:*",
+		"X-ApiCoreX-User-Type":   "tenant_user",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("/me status = %d, want 200 (%s)", w.Code, w.Body)
@@ -205,6 +212,9 @@ func TestHandler_Me(t *testing.T) {
 	}
 	if len(me.Roles) != 1 || me.Roles[0] != "owner" {
 		t.Errorf("/me roles = %v, want [owner]", me.Roles)
+	}
+	if len(me.Permissions) != 1 || me.Permissions[0] != "*:*" {
+		t.Errorf("/me permissions = %v, want [*:*]", me.Permissions)
 	}
 
 	// /me without auth header → 401
@@ -263,3 +273,124 @@ func (e errorString) Error() string { return string(e) }
 
 // keep the plugin import used (header helpers are exercised by the real /me handler)
 var _ = plugin.UserID
+
+// registerAcme provisions the acme tenant and returns the owner's tenant_id by
+// reading it back through a login token.
+func registerAcme(t *testing.T, r *gin.Engine) {
+	t.Helper()
+	do(t, r, "POST", "/auth/register", RegisterRequest{
+		Slug: "acme", Name: "Acme", Plan: "starter",
+		Email: "owner@acme.com", Password: "secret123", FullName: "Ada",
+	}, nil)
+}
+
+// ctxHeaders builds the X-ApiCoreX-* context Core injects after verifying a token.
+func ctxHeaders(tenantID, userID, perms string) map[string]string {
+	return map[string]string{
+		plugin.HeaderTenantID:    tenantID,
+		plugin.HeaderUserID:      userID,
+		plugin.HeaderSchema:      "tenant_acme",
+		plugin.HeaderPermissions: perms,
+	}
+}
+
+// Defense-in-depth: even if a request reaches the plugin (e.g. a direct call
+// bypassing the gateway), the handler rejects it without the right permission.
+func TestHandler_BranchAuthz(t *testing.T) {
+	r, _ := newTestRouter(t)
+	registerAcme(t, r)
+	tid := loginTenantID(t, r)
+
+	// no permissions header → 403
+	w := do(t, r, "POST", "/branches", CreateBranchRequest{Slug: "dhaka", Name: "Dhaka"},
+		ctxHeaders(tid, "u_x", ""))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("create branch without permission = %d, want 403 (%s)", w.Code, w.Body)
+	}
+
+	// insufficient permission (only branch:read) → 403
+	w = do(t, r, "POST", "/branches", CreateBranchRequest{Slug: "dhaka", Name: "Dhaka"},
+		ctxHeaders(tid, "u_x", "branch:read"))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("create branch with branch:read = %d, want 403 (%s)", w.Code, w.Body)
+	}
+
+	// exact permission → 201
+	w = do(t, r, "POST", "/branches", CreateBranchRequest{Slug: "dhaka", Name: "Dhaka"},
+		ctxHeaders(tid, "u_x", "branch:write"))
+	if w.Code != http.StatusCreated {
+		t.Errorf("create branch with branch:write = %d, want 201 (%s)", w.Code, w.Body)
+	}
+
+	// wildcard permission (branch:*) also allows write → 201
+	w = do(t, r, "POST", "/branches", CreateBranchRequest{Slug: "ctg", Name: "Chattogram"},
+		ctxHeaders(tid, "u_x", "branch:*"))
+	if w.Code != http.StatusCreated {
+		t.Errorf("create branch with branch:* = %d, want 201 (%s)", w.Code, w.Body)
+	}
+
+	// superuser wildcard (*:*) allows everything → 201
+	w = do(t, r, "POST", "/branches", CreateBranchRequest{Slug: "syl", Name: "Sylhet"},
+		ctxHeaders(tid, "u_x", "*:*"))
+	if w.Code != http.StatusCreated {
+		t.Errorf("create branch with *:* = %d, want 201 (%s)", w.Code, w.Body)
+	}
+
+	// reading branches needs branch:read; with it → 200
+	w = do(t, r, "GET", "/branches", nil, ctxHeaders(tid, "u_x", "branch:read"))
+	if w.Code != http.StatusOK {
+		t.Errorf("list branches with branch:read = %d, want 200 (%s)", w.Code, w.Body)
+	}
+}
+
+// Role management requires tenant:manage; lesser permissions are rejected.
+func TestHandler_RoleAuthz(t *testing.T) {
+	r, _ := newTestRouter(t)
+	registerAcme(t, r)
+	tid := loginTenantID(t, r)
+
+	body := CreateRoleRequest{Slug: "auditor", Name: "Auditor", Permissions: []string{"user:read"}}
+
+	// user:write is not enough → 403
+	w := do(t, r, "POST", "/roles", body, ctxHeaders(tid, "u_x", "user:write"))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("create role with user:write = %d, want 403 (%s)", w.Code, w.Body)
+	}
+
+	// tenant:manage → 201
+	w = do(t, r, "POST", "/roles", body, ctxHeaders(tid, "u_x", "tenant:manage"))
+	if w.Code != http.StatusCreated {
+		t.Errorf("create role with tenant:manage = %d, want 201 (%s)", w.Code, w.Body)
+	}
+}
+
+// loginTenantID logs in as the acme owner and returns the tenant_id from the token.
+func loginTenantID(t *testing.T, r *gin.Engine) string {
+	t.Helper()
+	w := do(t, r, "POST", "/auth/login", LoginRequest{Slug: "acme", Email: "owner@acme.com", Password: "secret123"}, nil)
+	var lr LoginResponse
+	json.Unmarshal(w.Body.Bytes(), &lr)
+	tid, _ := decodeTenantID(lr.AccessToken)
+	if tid == "" {
+		t.Fatal("could not decode tenant_id from token")
+	}
+	return tid
+}
+
+func decodeTenantID(token string) (string, error) {
+	parts := splitDots(token)
+	if len(parts) != 3 {
+		return "", errBadToken
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", err
+	}
+	var claims struct {
+		TenantID string `json:"tenant_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", err
+	}
+	return claims.TenantID, nil
+}

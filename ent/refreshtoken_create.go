@@ -32,6 +32,20 @@ func (rtc *RefreshTokenCreate) SetTenantID(s string) *RefreshTokenCreate {
 	return rtc
 }
 
+// SetBranchID sets the "branch_id" field.
+func (rtc *RefreshTokenCreate) SetBranchID(s string) *RefreshTokenCreate {
+	rtc.mutation.SetBranchID(s)
+	return rtc
+}
+
+// SetNillableBranchID sets the "branch_id" field if the given value is not nil.
+func (rtc *RefreshTokenCreate) SetNillableBranchID(s *string) *RefreshTokenCreate {
+	if s != nil {
+		rtc.SetBranchID(*s)
+	}
+	return rtc
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (rtc *RefreshTokenCreate) SetExpiresAt(t time.Time) *RefreshTokenCreate {
 	rtc.mutation.SetExpiresAt(t)
@@ -187,6 +201,10 @@ func (rtc *RefreshTokenCreate) createSpec() (*RefreshToken, *sqlgraph.CreateSpec
 	if value, ok := rtc.mutation.TenantID(); ok {
 		_spec.SetField(refreshtoken.FieldTenantID, field.TypeString, value)
 		_node.TenantID = value
+	}
+	if value, ok := rtc.mutation.BranchID(); ok {
+		_spec.SetField(refreshtoken.FieldBranchID, field.TypeString, value)
+		_node.BranchID = value
 	}
 	if value, ok := rtc.mutation.ExpiresAt(); ok {
 		_spec.SetField(refreshtoken.FieldExpiresAt, field.TypeTime, value)

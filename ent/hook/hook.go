@@ -9,6 +9,18 @@ import (
 	"github.com/msrsiddik/apicorex-identity/ent"
 )
 
+// The BranchFunc type is an adapter to allow the use of ordinary
+// function as Branch mutator.
+type BranchFunc func(context.Context, *ent.BranchMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f BranchFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.BranchMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.BranchMutation", m)
+}
+
 // The PluginInstallFunc type is an adapter to allow the use of ordinary
 // function as PluginInstall mutator.
 type PluginInstallFunc func(context.Context, *ent.PluginInstallMutation) (ent.Value, error)
@@ -43,6 +55,30 @@ func (f RefreshTokenFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RefreshTokenMutation", m)
+}
+
+// The RoleFunc type is an adapter to allow the use of ordinary
+// function as Role mutator.
+type RoleFunc func(context.Context, *ent.RoleMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f RoleFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.RoleMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RoleMutation", m)
+}
+
+// The RolePermissionFunc type is an adapter to allow the use of ordinary
+// function as RolePermission mutator.
+type RolePermissionFunc func(context.Context, *ent.RolePermissionMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f RolePermissionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.RolePermissionMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RolePermissionMutation", m)
 }
 
 // The TenantFunc type is an adapter to allow the use of ordinary

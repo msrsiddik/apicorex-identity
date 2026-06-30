@@ -33,5 +33,6 @@ func (Tenant) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.To("tenant_users", TenantUser.Type),
 		edge.To("plugin_installs", PluginInstall.Type),
+		edge.To("branches", Branch.Type),
 	}
 }

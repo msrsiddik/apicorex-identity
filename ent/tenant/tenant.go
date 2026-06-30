@@ -26,6 +26,8 @@ const (
 	EdgeTenantUsers = "tenant_users"
 	// EdgePluginInstalls holds the string denoting the plugin_installs edge name in mutations.
 	EdgePluginInstalls = "plugin_installs"
+	// EdgeBranches holds the string denoting the branches edge name in mutations.
+	EdgeBranches = "branches"
 	// Table holds the table name of the tenant in the database.
 	Table = "tenants"
 	// TenantUsersTable is the table that holds the tenant_users relation/edge.
@@ -42,6 +44,13 @@ const (
 	PluginInstallsInverseTable = "plugin_installs"
 	// PluginInstallsColumn is the table column denoting the plugin_installs relation/edge.
 	PluginInstallsColumn = "tenant_id"
+	// BranchesTable is the table that holds the branches relation/edge.
+	BranchesTable = "branches"
+	// BranchesInverseTable is the table name for the Branch entity.
+	// It exists in this package in order to avoid circular dependency with the "branch" package.
+	BranchesInverseTable = "branches"
+	// BranchesColumn is the table column denoting the branches relation/edge.
+	BranchesColumn = "tenant_id"
 )
 
 // Columns holds all SQL columns for tenant fields.
@@ -131,6 +140,20 @@ func ByPluginInstalls(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 		sqlgraph.OrderByNeighborTerms(s, newPluginInstallsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
+
+// ByBranchesCount orders the results by branches count.
+func ByBranchesCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newBranchesStep(), opts...)
+	}
+}
+
+// ByBranches orders the results by branches terms.
+func ByBranches(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newBranchesStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
 func newTenantUsersStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -143,5 +166,12 @@ func newPluginInstallsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(PluginInstallsInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, PluginInstallsTable, PluginInstallsColumn),
+	)
+}
+func newBranchesStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(BranchesInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, BranchesTable, BranchesColumn),
 	)
 }

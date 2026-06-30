@@ -20,6 +20,7 @@ import (
 	"github.com/msrsiddik/apicorex-identity/internal/migrator"
 	"github.com/msrsiddik/apicorex-identity/internal/plugin"
 	"github.com/msrsiddik/apicorex-identity/internal/pluginmgr"
+	"github.com/msrsiddik/apicorex-identity/internal/rbac"
 	itenant "github.com/msrsiddik/apicorex-identity/internal/tenant"
 )
 
@@ -46,6 +47,13 @@ func main() {
 		log.Fatalf("ent schema create: %v", err)
 	}
 
+	// seed built-in system roles (idempotent)
+	rbacStore := rbac.NewStore(entClient)
+	if _, err := rbacStore.SeedSystemRoles(ctx); err != nil {
+		log.Fatalf("seed system roles: %v", err)
+	}
+	log.Println("[identity] system roles seeded")
+
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET is required")
@@ -67,8 +75,8 @@ func main() {
 	mig := migrator.New(entClient, db)
 	installer := pluginmgr.NewInstaller(entClient, mig, coreRegistry)
 
-	saga := itenant.NewSaga(entClient, db, dsn, installer)
-	authSvc := iauth.NewService(entClient, db, issuer, denylist)
+	saga := itenant.NewSaga(entClient, db, dsn, installer, rbacStore)
+	authSvc := iauth.NewService(entClient, db, issuer, denylist, rbacStore)
 
 	p := plugin.New(plugin.Config{
 		Name:          "identity",

@@ -34,16 +34,28 @@ func (tuc *TenantUserCreate) SetTenantID(s string) *TenantUserCreate {
 	return tuc
 }
 
-// SetRole sets the "role" field.
-func (tuc *TenantUserCreate) SetRole(s string) *TenantUserCreate {
-	tuc.mutation.SetRole(s)
+// SetBranchID sets the "branch_id" field.
+func (tuc *TenantUserCreate) SetBranchID(s string) *TenantUserCreate {
+	tuc.mutation.SetBranchID(s)
 	return tuc
 }
 
-// SetNillableRole sets the "role" field if the given value is not nil.
-func (tuc *TenantUserCreate) SetNillableRole(s *string) *TenantUserCreate {
-	if s != nil {
-		tuc.SetRole(*s)
+// SetRoleID sets the "role_id" field.
+func (tuc *TenantUserCreate) SetRoleID(s string) *TenantUserCreate {
+	tuc.mutation.SetRoleID(s)
+	return tuc
+}
+
+// SetIsDefault sets the "is_default" field.
+func (tuc *TenantUserCreate) SetIsDefault(b bool) *TenantUserCreate {
+	tuc.mutation.SetIsDefault(b)
+	return tuc
+}
+
+// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
+func (tuc *TenantUserCreate) SetNillableIsDefault(b *bool) *TenantUserCreate {
+	if b != nil {
+		tuc.SetIsDefault(*b)
 	}
 	return tuc
 }
@@ -113,9 +125,9 @@ func (tuc *TenantUserCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (tuc *TenantUserCreate) defaults() {
-	if _, ok := tuc.mutation.Role(); !ok {
-		v := tenantuser.DefaultRole
-		tuc.mutation.SetRole(v)
+	if _, ok := tuc.mutation.IsDefault(); !ok {
+		v := tenantuser.DefaultIsDefault
+		tuc.mutation.SetIsDefault(v)
 	}
 	if _, ok := tuc.mutation.CreatedAt(); !ok {
 		v := tenantuser.DefaultCreatedAt()
@@ -131,8 +143,14 @@ func (tuc *TenantUserCreate) check() error {
 	if _, ok := tuc.mutation.TenantID(); !ok {
 		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "TenantUser.tenant_id"`)}
 	}
-	if _, ok := tuc.mutation.Role(); !ok {
-		return &ValidationError{Name: "role", err: errors.New(`ent: missing required field "TenantUser.role"`)}
+	if _, ok := tuc.mutation.BranchID(); !ok {
+		return &ValidationError{Name: "branch_id", err: errors.New(`ent: missing required field "TenantUser.branch_id"`)}
+	}
+	if _, ok := tuc.mutation.RoleID(); !ok {
+		return &ValidationError{Name: "role_id", err: errors.New(`ent: missing required field "TenantUser.role_id"`)}
+	}
+	if _, ok := tuc.mutation.IsDefault(); !ok {
+		return &ValidationError{Name: "is_default", err: errors.New(`ent: missing required field "TenantUser.is_default"`)}
 	}
 	if _, ok := tuc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "TenantUser.created_at"`)}
@@ -179,9 +197,17 @@ func (tuc *TenantUserCreate) createSpec() (*TenantUser, *sqlgraph.CreateSpec) {
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := tuc.mutation.Role(); ok {
-		_spec.SetField(tenantuser.FieldRole, field.TypeString, value)
-		_node.Role = value
+	if value, ok := tuc.mutation.BranchID(); ok {
+		_spec.SetField(tenantuser.FieldBranchID, field.TypeString, value)
+		_node.BranchID = value
+	}
+	if value, ok := tuc.mutation.RoleID(); ok {
+		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
+		_node.RoleID = value
+	}
+	if value, ok := tuc.mutation.IsDefault(); ok {
+		_spec.SetField(tenantuser.FieldIsDefault, field.TypeBool, value)
+		_node.IsDefault = value
 	}
 	if value, ok := tuc.mutation.CreatedAt(); ok {
 		_spec.SetField(tenantuser.FieldCreatedAt, field.TypeTime, value)

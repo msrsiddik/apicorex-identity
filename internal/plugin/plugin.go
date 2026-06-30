@@ -27,9 +27,12 @@ const (
 	HeaderTenantID   = "X-ApiCoreX-Tenant-ID"
 	HeaderTenantSlug = "X-ApiCoreX-Tenant-Slug"
 	HeaderSchema     = "X-ApiCoreX-Schema"
+	HeaderBranchID   = "X-ApiCoreX-Branch-ID"
+	HeaderBranchSlug = "X-ApiCoreX-Branch-Slug"
 	HeaderUserID     = "X-ApiCoreX-User-ID"
-	HeaderUserType   = "X-ApiCoreX-User-Type"
-	HeaderRoles      = "X-ApiCoreX-Roles"
+	HeaderUserType    = "X-ApiCoreX-User-Type"
+	HeaderRoles       = "X-ApiCoreX-Roles"
+	HeaderPermissions = "X-ApiCoreX-Permissions"
 )
 
 // These helpers read the trusted tenant context Core injected as X-ApiCoreX-*
@@ -37,6 +40,8 @@ const (
 func TenantID(c *gin.Context) string   { return c.GetHeader(HeaderTenantID) }
 func TenantSlug(c *gin.Context) string { return c.GetHeader(HeaderTenantSlug) }
 func SchemaName(c *gin.Context) string { return c.GetHeader(HeaderSchema) }
+func BranchID(c *gin.Context) string   { return c.GetHeader(HeaderBranchID) }
+func BranchSlug(c *gin.Context) string { return c.GetHeader(HeaderBranchSlug) }
 func UserID(c *gin.Context) string     { return c.GetHeader(HeaderUserID) }
 func UserType(c *gin.Context) string   { return c.GetHeader(HeaderUserType) }
 func Roles(c *gin.Context) []string {
@@ -45,6 +50,40 @@ func Roles(c *gin.Context) []string {
 		return nil
 	}
 	return strings.Split(v, ",")
+}
+
+// Permissions returns the caller's resolved permission list (from the verified
+// token, injected by Core as X-ApiCoreX-Permissions).
+func Permissions(c *gin.Context) []string {
+	v := c.GetHeader(HeaderPermissions)
+	if v == "" {
+		return nil
+	}
+	return strings.Split(v, ",")
+}
+
+// HasPermission reports whether the caller holds a permission satisfying perm,
+// honoring "*" wildcards ("branch:*", "*:*"). This is a defense-in-depth check;
+// Core's gateway enforces the same on the route before proxying.
+func HasPermission(c *gin.Context, perm string) bool {
+	for _, g := range Permissions(c) {
+		if permMatch(g, perm) {
+			return true
+		}
+	}
+	return false
+}
+
+func permMatch(granted, required string) bool {
+	if granted == required || granted == "*:*" {
+		return true
+	}
+	gr, ga, ok1 := strings.Cut(granted, ":")
+	rr, ra, ok2 := strings.Cut(required, ":")
+	if !ok1 || !ok2 {
+		return false
+	}
+	return (gr == "*" || gr == rr) && (ga == "*" || ga == ra)
 }
 
 // Config holds plugin runtime settings (from env in main).
@@ -66,10 +105,11 @@ type Migration struct {
 }
 
 type route struct {
-	Method string   `json:"method"`
-	Path   string   `json:"path"`
-	Public bool     `json:"public"`
-	Tags   []string `json:"tags,omitempty"`
+	Method     string   `json:"method"`
+	Path       string   `json:"path"`
+	Public     bool     `json:"public"`
+	Permission string   `json:"permission,omitempty"` // required permission; "" = any authenticated
+	Tags       []string `json:"tags,omitempty"`
 }
 
 // Plugin wraps a real *gin.Engine plus a shadow OpenAPI router for Scalar docs.
@@ -79,6 +119,7 @@ type Plugin struct {
 	spec        ginopenapi.Generator
 	routes      []route
 	public      map[string]bool
+	perms       map[string]string // "METHOD path" -> required permission
 	migrations  []Migration
 	pluginID    string
 	pluginToken string
@@ -95,11 +136,18 @@ func New(cfg Config) *Plugin {
 		option.WithVersion(cfg.Version),
 		option.WithDisableDocs(),
 	)
-	return &Plugin{cfg: cfg, engine: engine, spec: spec, public: map[string]bool{}}
+	return &Plugin{cfg: cfg, engine: engine, spec: spec, public: map[string]bool{}, perms: map[string]string{}}
 }
 
 // Public marks a path as not requiring JWT auth.
 func (p *Plugin) Public(path string) { p.public[path] = true }
+
+// RequirePermission declares the permission a route needs. Core enforces it at
+// the gateway before proxying; the plugin can also check via HasPermission for
+// defense-in-depth. method is case-insensitive.
+func (p *Plugin) RequirePermission(method, path, perm string) {
+	p.perms[strings.ToUpper(method)+" "+path] = perm
+}
 
 // Migration declares a tenant-scoped DB migration.
 func (p *Plugin) Migration(version, name, upSQL, downSQL string) {
@@ -132,6 +180,9 @@ func (p *Plugin) buildManifest() map[string]any {
 	for i := range routes {
 		if p.public[routes[i].Path] {
 			routes[i].Public = true
+		}
+		if perm, ok := p.perms[routes[i].Method+" "+routes[i].Path]; ok {
+			routes[i].Permission = perm
 		}
 	}
 	specJSON, err := p.spec.MarshalJSON()
