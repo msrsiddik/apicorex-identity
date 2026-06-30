@@ -37,6 +37,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	r := gin.New()
 	r.POST("/auth/register", h.register)
 	r.GET("/auth/slug-available", h.slugAvailable)
+	r.GET("/auth/slug-suggest", h.slugSuggest)
 	r.POST("/auth/login", h.login)
 	r.GET("/me", h.me)
 	r.POST("/plugins/install", h.install)
@@ -331,6 +332,43 @@ func TestHandler_SlugAvailable(t *testing.T) {
 	w := do(t, r, "GET", "/auth/slug-available", nil, nil)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("slug-available without param = %d, want 400", w.Code)
+	}
+}
+
+// The slug-suggest endpoint derives a valid slug from a name (name required).
+func TestHandler_SlugSuggest(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	// valid name → slug
+	w := do(t, r, "GET", "/auth/slug-suggest?name=Acme%20Corp", nil, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("slug-suggest = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	var resp SlugSuggestResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Slug != "acme_corp" {
+		t.Errorf("suggested slug = %q, want acme_corp", resp.Slug)
+	}
+
+	// after acme_corp is taken, suggestion is suffixed
+	do(t, r, "POST", "/auth/register", RegisterRequest{
+		Slug: "acme_corp", Name: "Acme Corp", Email: "x@acme.com", Password: "secret123", FullName: "X",
+	}, nil)
+	w2 := do(t, r, "GET", "/auth/slug-suggest?name=Acme%20Corp", nil, nil)
+	var resp2 SlugSuggestResponse
+	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	if resp2.Slug != "acme_corp_2" {
+		t.Errorf("suggestion after taken = %q, want acme_corp_2", resp2.Slug)
+	}
+
+	// missing name → 400
+	if w := do(t, r, "GET", "/auth/slug-suggest", nil, nil); w.Code != http.StatusBadRequest {
+		t.Errorf("slug-suggest without name = %d, want 400", w.Code)
+	}
+
+	// unusable name → 422
+	if w := do(t, r, "GET", "/auth/slug-suggest?name=%21%21%21", nil, nil); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("slug-suggest with unusable name = %d, want 422", w.Code)
 	}
 }
 

@@ -41,6 +41,11 @@ type SlugAvailableResponse struct {
 	Reason    string `json:"reason,omitempty"` // why it's unavailable/invalid
 }
 
+type SlugSuggestResponse struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"` // a valid, available slug derived from name
+}
+
 type LoginRequest struct {
 	Slug     string `json:"slug"     example:"acme"`
 	Email    string `json:"email"    example:"owner@acme.com"`
@@ -184,6 +189,7 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/login")
 	p.Public("/auth/refresh")
 	p.Public("/auth/slug-available")
+	p.Public("/auth/slug-suggest")
 
 	p.POST("/auth/register", h.register,
 		option.Summary("Register a new tenant"),
@@ -199,6 +205,16 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Description("Public. Returns valid=false for a malformed slug, available=false if taken."),
 		option.Tags("auth"),
 		option.Response(http.StatusOK, new(SlugAvailableResponse)),
+	)
+	p.GET("/auth/slug-suggest", h.slugSuggest,
+		option.Summary("Suggest a valid, available slug from a name"),
+		option.Description("Public. name is required. Returns a slug-safe, unique slug derived from name."),
+		option.Tags("auth"),
+		option.Request(new(struct {
+			Name string `query:"name" example:"Acme Corp"`
+		})),
+		option.Response(http.StatusOK, new(SlugSuggestResponse)),
+		option.Response(http.StatusUnprocessableEntity, new(ErrorResponse)),
 	)
 	p.POST("/auth/login", h.login,
 		option.Summary("Login"),
@@ -362,6 +378,21 @@ func (h *handlers) register(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, RegisterResponse{Message: "tenant registered", Slug: slug})
+}
+
+func (h *handlers) slugSuggest(c *gin.Context) {
+	name := c.Query("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "name query parameter required"})
+		return
+	}
+	slug, err := h.saga.SuggestSlug(c.Request.Context(), name)
+	if err != nil {
+		// only failure is "no slug can be derived from name"
+		c.JSON(http.StatusUnprocessableEntity, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, SlugSuggestResponse{Name: name, Slug: slug})
 }
 
 func (h *handlers) slugAvailable(c *gin.Context) {

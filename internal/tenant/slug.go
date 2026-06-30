@@ -53,6 +53,13 @@ func (s *Saga) SlugAvailable(ctx context.Context, slug string) (bool, error) {
 	return !taken, nil
 }
 
+// SuggestSlug derives a free, valid slug from a tenant name without registering
+// anything — for previewing a slug before submitting the form. Returns
+// ErrInvalidSlug if no slug can be derived from name (e.g. name has no letters).
+func (s *Saga) SuggestSlug(ctx context.Context, name string) (string, error) {
+	return s.resolveSlug(ctx, "", name)
+}
+
 // resolveSlug returns a free, valid slug. If requested is non-empty it is used
 // as-is (caller validated it). If empty, a slug is generated from name and made
 // unique by appending _2, _3, … on collision. Returns ErrInvalidSlug if a slug

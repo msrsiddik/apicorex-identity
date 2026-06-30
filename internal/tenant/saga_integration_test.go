@@ -259,3 +259,34 @@ func TestSaga_SlugAvailable(t *testing.T) {
 		t.Error("acme should be taken after registration")
 	}
 }
+
+// SuggestSlug derives a unique, valid slug from a name without registering.
+func TestSaga_SuggestSlug(t *testing.T) {
+	pg := testutil.NewPostgres(t)
+	ctx := context.Background()
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
+
+	slug, err := saga.SuggestSlug(ctx, "Wayne Enterprises")
+	if err != nil {
+		t.Fatalf("suggest: %v", err)
+	}
+	if slug != "wayne_enterprises" || tenant.ValidateSlug(slug) != nil {
+		t.Errorf("suggested slug = %q, want valid wayne_enterprises", slug)
+	}
+	// suggesting again returns the same (nothing registered yet)
+	if again, _ := saga.SuggestSlug(ctx, "Wayne Enterprises"); again != slug {
+		t.Errorf("suggest should be stable until taken: %q vs %q", again, slug)
+	}
+	// after registering it, suggestion moves to a suffix
+	if _, err := saga.Register(ctx, ownerInput("wayne_enterprises", "owner@wayne.com")); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	next, _ := saga.SuggestSlug(ctx, "Wayne Enterprises")
+	if next != "wayne_enterprises_2" {
+		t.Errorf("post-register suggestion = %q, want wayne_enterprises_2", next)
+	}
+	// a name with no usable characters errors
+	if _, err := saga.SuggestSlug(ctx, "!!!"); err == nil {
+		t.Error("suggest from an unusable name should error")
+	}
+}
