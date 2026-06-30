@@ -19,7 +19,7 @@ import (
 // --- Request / Response types ---
 
 type RegisterRequest struct {
-	Slug     string `json:"slug"      example:"acme"`
+	Slug     string `json:"slug"      example:"acme"` // optional; auto-generated from name if omitted
 	Name     string `json:"name"      example:"Acme Corp"`
 	Plan     string `json:"plan"      example:"starter"`
 	Email    string `json:"email"     example:"owner@acme.com"`
@@ -31,6 +31,14 @@ type RegisterRequest struct {
 
 type RegisterResponse struct {
 	Message string `json:"message" example:"tenant registered"`
+	Slug    string `json:"slug"    example:"acme"` // the final slug (provided or generated)
+}
+
+type SlugAvailableResponse struct {
+	Slug      string `json:"slug"`
+	Available bool   `json:"available"`
+	Valid     bool   `json:"valid"`            // false if the slug is malformed
+	Reason    string `json:"reason,omitempty"` // why it's unavailable/invalid
 }
 
 type LoginRequest struct {
@@ -175,13 +183,22 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/register")
 	p.Public("/auth/login")
 	p.Public("/auth/refresh")
+	p.Public("/auth/slug-available")
 
 	p.POST("/auth/register", h.register,
 		option.Summary("Register a new tenant"),
+		option.Description("slug is optional — if omitted, one is generated from name and made unique. "+
+			"The final slug is returned in the response."),
 		option.Tags("auth"),
 		option.Request(new(RegisterRequest)),
 		option.Response(http.StatusCreated, new(RegisterResponse)),
 		option.Response(http.StatusInternalServerError, new(ErrorResponse)),
+	)
+	p.GET("/auth/slug-available", h.slugAvailable,
+		option.Summary("Check whether a tenant slug is available"),
+		option.Description("Public. Returns valid=false for a malformed slug, available=false if taken."),
+		option.Tags("auth"),
+		option.Response(http.StatusOK, new(SlugAvailableResponse)),
 	)
 	p.POST("/auth/login", h.login,
 		option.Summary("Login"),
@@ -324,19 +341,50 @@ func (h *handlers) register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return
 	}
-	if err := tenant.ValidateSlug(in.Slug); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	// slug is optional: validate it only when provided; otherwise the saga
+	// generates one from the name.
+	if in.Slug != "" {
+		if err := tenant.ValidateSlug(in.Slug); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
+	} else if in.Name == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "name is required to generate a slug"})
 		return
 	}
-	if err := h.saga.Register(c.Request.Context(), tenant.RegisterInput{
+	slug, err := h.saga.Register(c.Request.Context(), tenant.RegisterInput{
 		Slug: in.Slug, Name: in.Name, Plan: in.Plan,
 		OwnerEmail: in.Email, OwnerPassword: in.Password,
 		OwnerFullName: in.FullName, OwnerPhone: in.Phone, OwnerJobTitle: in.JobTitle,
-	}); err != nil {
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, RegisterResponse{Message: "tenant registered"})
+	c.JSON(http.StatusCreated, RegisterResponse{Message: "tenant registered", Slug: slug})
+}
+
+func (h *handlers) slugAvailable(c *gin.Context) {
+	slug := c.Query("slug")
+	if slug == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "slug query parameter required"})
+		return
+	}
+	// well-formedness first, so the caller learns *why* an invalid slug is unusable
+	if err := tenant.ValidateSlug(slug); err != nil {
+		c.JSON(http.StatusOK, SlugAvailableResponse{Slug: slug, Available: false, Valid: false, Reason: err.Error()})
+		return
+	}
+	ok, err := h.saga.SlugAvailable(c.Request.Context(), slug)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	resp := SlugAvailableResponse{Slug: slug, Available: ok, Valid: true}
+	if !ok {
+		resp.Reason = "slug already taken"
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *handlers) login(c *gin.Context) {

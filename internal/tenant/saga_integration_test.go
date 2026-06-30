@@ -37,7 +37,7 @@ func TestSaga_Register(t *testing.T) {
 	ctx := context.Background()
 
 	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
-	if err := saga.Register(ctx, ownerInput("acme", "owner@acme.com")); err != nil {
+	if _, err := saga.Register(ctx, ownerInput("acme", "owner@acme.com")); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -91,10 +91,10 @@ func TestSaga_DuplicateSlugFails(t *testing.T) {
 	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 
 	in := ownerInput("dup", "o@dup.com")
-	if err := saga.Register(ctx, in); err != nil {
+	if _, err := saga.Register(ctx, in); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	if err := saga.Register(ctx, in); err == nil {
+	if _, err := saga.Register(ctx, in); err == nil {
 		t.Fatal("registering a duplicate slug should fail")
 	}
 }
@@ -106,10 +106,10 @@ func TestSaga_SameEmailDifferentTenant(t *testing.T) {
 	ctx := context.Background()
 	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 
-	if err := saga.Register(ctx, ownerInput("first", "multi@x.com")); err != nil {
+	if _, err := saga.Register(ctx, ownerInput("first", "multi@x.com")); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	if err := saga.Register(ctx, ownerInput("second", "multi@x.com")); err != nil {
+	if _, err := saga.Register(ctx, ownerInput("second", "multi@x.com")); err != nil {
 		t.Fatalf("second register (same email): %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestSaga_RollbackOnFailure(t *testing.T) {
 	// failingInstaller makes step 6 fail after tenant, user, membership, schema,
 	// and profile have been created — exercising full compensation.
 	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, failingInstaller{}, pg.RBAC)
-	err := saga.Register(ctx, ownerInput("rollme", "rollback@x.com"))
+	_, err := saga.Register(ctx, ownerInput("rollme", "rollback@x.com"))
 	if err == nil {
 		t.Fatal("expected Register to fail (installer boom)")
 	}
@@ -168,13 +168,13 @@ func TestSaga_RollbackKeepsExistingUser(t *testing.T) {
 
 	// first registration succeeds, creating the global user
 	ok := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
-	if err := ok.Register(ctx, ownerInput("first", "shared@x.com")); err != nil {
+	if _, err := ok.Register(ctx, ownerInput("first", "shared@x.com")); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
 
 	// second registration (same email) fails at step 6
 	bad := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, failingInstaller{}, pg.RBAC)
-	if err := bad.Register(ctx, ownerInput("second", "shared@x.com")); err == nil {
+	if _, err := bad.Register(ctx, ownerInput("second", "shared@x.com")); err == nil {
 		t.Fatal("expected second register to fail")
 	}
 
@@ -186,5 +186,76 @@ func TestSaga_RollbackKeepsExistingUser(t *testing.T) {
 	u, _ := pg.EntClient.User.Query().Where(entuser.Email("shared@x.com")).Only(ctx)
 	if n, _ := pg.EntClient.TenantUser.Query().Where(tenantuser.UserID(u.ID)).Count(ctx); n != 1 {
 		t.Errorf("only first membership should remain, count=%d", n)
+	}
+}
+
+// Registering without a slug generates one from the name.
+func TestSaga_AutoSlugFromName(t *testing.T) {
+	pg := testutil.NewPostgres(t)
+	ctx := context.Background()
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
+
+	in := tenant.RegisterInput{
+		Slug: "", Name: "Globex Industries", Plan: "starter",
+		OwnerEmail: "owner@globex.com", OwnerPassword: "secret123", OwnerFullName: "G",
+	}
+	slug, err := saga.Register(ctx, in)
+	if err != nil {
+		t.Fatalf("register without slug: %v", err)
+	}
+	if slug != "globex_industries" {
+		t.Errorf("generated slug = %q, want globex_industries", slug)
+	}
+	if exists, _ := pg.EntClient.Tenant.Query().Where(enttenant.Slug(slug)).Exist(ctx); !exists {
+		t.Errorf("tenant with generated slug %q not found", slug)
+	}
+}
+
+// A generated slug that collides gets a numeric suffix.
+func TestSaga_AutoSlugCollision(t *testing.T) {
+	pg := testutil.NewPostgres(t)
+	ctx := context.Background()
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
+
+	// first registration takes "globex_industries"
+	if _, err := saga.Register(ctx, tenant.RegisterInput{
+		Name: "Globex Industries", Plan: "starter",
+		OwnerEmail: "a@globex.com", OwnerPassword: "secret123", OwnerFullName: "A",
+	}); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	// second, same name, different owner → suffixed slug
+	slug, err := saga.Register(ctx, tenant.RegisterInput{
+		Name: "Globex Industries", Plan: "starter",
+		OwnerEmail: "b@globex.com", OwnerPassword: "secret123", OwnerFullName: "B",
+	})
+	if err != nil {
+		t.Fatalf("second register: %v", err)
+	}
+	if slug != "globex_industries_2" {
+		t.Errorf("collided slug = %q, want globex_industries_2", slug)
+	}
+}
+
+// SlugAvailable reflects validity and existing tenants.
+func TestSaga_SlugAvailable(t *testing.T) {
+	pg := testutil.NewPostgres(t)
+	ctx := context.Background()
+	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
+
+	// free + valid
+	if ok, _ := saga.SlugAvailable(ctx, "acme"); !ok {
+		t.Error("acme should be available before registration")
+	}
+	// malformed → not available
+	if ok, _ := saga.SlugAvailable(ctx, "Ab"); ok {
+		t.Error("malformed slug should not be available")
+	}
+	// taken → not available
+	if _, err := saga.Register(ctx, ownerInput("acme", "owner@acme.com")); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if ok, _ := saga.SlugAvailable(ctx, "acme"); ok {
+		t.Error("acme should be taken after registration")
 	}
 }

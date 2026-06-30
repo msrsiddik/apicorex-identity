@@ -71,14 +71,20 @@ func NewSaga(entClient *ent.Client, db *sql.DB, dsn string, installer PluginInst
 	return &Saga{entClient: entClient, db: db, dsn: dsn, installer: installer, rbac: rbacStore}
 }
 
-// Register provisions a new tenant and owner. On any step failure it compensates
-// the already-completed steps and returns the error. An existing global account
-// (matched by email) is reused so a user can own/join multiple tenants.
-func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
-	if err := ValidateSlug(in.Slug); err != nil {
-		return err
+// Register provisions a new tenant and owner and returns the final slug. On any
+// step failure it compensates the already-completed steps and returns the error.
+// An existing global account (matched by email) is reused so a user can
+// own/join multiple tenants. If in.Slug is empty, a slug is generated from
+// in.Name and made unique.
+func (s *Saga) Register(ctx context.Context, in RegisterInput) (string, error) {
+	slug, err := s.resolveSlug(ctx, in.Slug, in.Name)
+	if err != nil {
+		return "", err
 	}
-	schemaName := "tenant_" + in.Slug
+	if err := ValidateSlug(slug); err != nil {
+		return "", err
+	}
+	schemaName := "tenant_" + slug
 	tenantID := "t_" + uuid.New().String()[:8]
 
 	var steps []func(context.Context) error
@@ -86,14 +92,14 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 	// Step 1: INSERT tenant record (public.tenants, provisioning)
 	t, err := s.entClient.Tenant.Create().
 		SetID(tenantID).
-		SetSlug(in.Slug).
+		SetSlug(slug).
 		SetName(in.Name).
 		SetPlan(in.Plan).
 		SetStatus("provisioning").
 		SetSchemaName(schemaName).
 		Save(ctx)
 	if err != nil {
-		return fmt.Errorf("step1 create tenant: %w", err)
+		return "", fmt.Errorf("step1 create tenant: %w", err)
 	}
 	steps = append(steps, func(ctx context.Context) error {
 		return s.entClient.Tenant.DeleteOneID(t.ID).Exec(ctx)
@@ -110,7 +116,7 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 		SetStatus("active").
 		Save(ctx); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step1b create default branch: %w", err)
+		return "", fmt.Errorf("step1b create default branch: %w", err)
 	}
 	steps = append(steps, func(ctx context.Context) error {
 		return s.entClient.Branch.DeleteOneID(branchID).Exec(ctx)
@@ -121,7 +127,7 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 	userID, createdUser, err := s.resolveUser(ctx, in.OwnerEmail, in.OwnerPassword)
 	if err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step2 resolve user: %w", err)
+		return "", fmt.Errorf("step2 resolve user: %w", err)
 	}
 	if createdUser {
 		steps = append(steps, func(ctx context.Context) error {
@@ -134,7 +140,7 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 	ownerRoleID, err := s.rbac.SystemRoleID(ctx, "owner")
 	if err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step2b resolve owner role: %w", err)
+		return "", fmt.Errorf("step2b resolve owner role: %w", err)
 	}
 	tuID := "tu_" + uuid.New().String()[:8]
 	if _, err := s.entClient.TenantUser.Create().
@@ -146,7 +152,7 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 		SetRoleID(ownerRoleID).
 		Save(ctx); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step2b create membership: %w", err)
+		return "", fmt.Errorf("step2b create membership: %w", err)
 	}
 	steps = append(steps, func(ctx context.Context) error {
 		return s.entClient.TenantUser.DeleteOneID(tuID).Exec(ctx)
@@ -155,7 +161,7 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 	// Step 3: CREATE SCHEMA tenant_{slug}
 	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %q", schemaName)); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step3 create schema: %w", err)
+		return "", fmt.Errorf("step3 create schema: %w", err)
 	}
 	steps = append(steps, func(ctx context.Context) error {
 		_, err := s.db.ExecContext(ctx, fmt.Sprintf("DROP SCHEMA IF EXISTS %q CASCADE", schemaName))
@@ -165,7 +171,7 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 	// Step 4: migrate tenant schema (user_profiles via ent)
 	if err := MigrateTenantSchema(ctx, s.db, s.dsn, schemaName); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step4 migrate tenant schema: %w", err)
+		return "", fmt.Errorf("step4 migrate tenant schema: %w", err)
 	}
 
 	// Step 5: owner PII profile in tenant schema (no credentials here)
@@ -179,23 +185,23 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) error {
 		SetSystemRole("owner").
 		Save(ctx); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step5 create owner profile: %w", err)
+		return "", fmt.Errorf("step5 create owner profile: %w", err)
 	}
 
 	// Step 6: run installed plugin migrations for this new tenant
 	if err := s.installer.InstallForNewTenant(ctx, tenantID, schemaName); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step6 install plugins for new tenant: %w", err)
+		return "", fmt.Errorf("step6 install plugins for new tenant: %w", err)
 	}
 
 	// Step 7: activate tenant
 	if _, err := s.entClient.Tenant.UpdateOneID(t.ID).SetStatus("active").Save(ctx); err != nil {
 		s.compensate(ctx, steps)
-		return fmt.Errorf("step7 activate tenant: %w", err)
+		return "", fmt.Errorf("step7 activate tenant: %w", err)
 	}
 
-	log.Printf("[saga] tenant registered: %s (%s), owner %s", in.Slug, tenantID, userID)
-	return nil
+	log.Printf("[saga] tenant registered: %s (%s), owner %s", slug, tenantID, userID)
+	return slug, nil
 }
 
 // resolveUser returns the global user_id for an email, creating the shared.users

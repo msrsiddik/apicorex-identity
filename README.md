@@ -128,7 +128,8 @@ compose file in the [Core repo](../apicorex) instead.
 
 | Method | Path | Public | Permission | Description |
 |--------|------|--------|------------|-------------|
-| POST | `/auth/register` | yes | — | Provision a tenant + owner (+ default `main` branch) |
+| POST | `/auth/register` | yes | — | Provision a tenant + owner (+ default `main` branch); `slug` optional (auto-generated from `name`), final slug returned |
+| GET | `/auth/slug-available` | yes | — | `?slug=` → `{valid, available, reason}` for live slug checks |
 | POST | `/auth/login` | yes | — | Returns access + refresh token (lands on default branch) |
 | POST | `/auth/refresh` | yes | — | Rotate tokens (re-resolves role permissions) |
 | POST | `/auth/logout` | no | — | Revoke refresh (+ access token if Redis) |

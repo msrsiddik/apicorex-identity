@@ -20,7 +20,7 @@ func (noopInstaller) InstallForNewTenant(context.Context, string, string) error 
 func registerTenant(t *testing.T, pg *testutil.PG, slug, email string) {
 	t.Helper()
 	saga := tenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
-	err := saga.Register(context.Background(), tenant.RegisterInput{
+	_, err := saga.Register(context.Background(), tenant.RegisterInput{
 		Slug: slug, Name: slug, Plan: "starter",
 		OwnerEmail: email, OwnerPassword: "secret123",
 		OwnerFullName: "Ada", OwnerPhone: "+100", OwnerJobTitle: "CEO",

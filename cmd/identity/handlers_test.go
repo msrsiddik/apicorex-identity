@@ -36,6 +36,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.POST("/auth/register", h.register)
+	r.GET("/auth/slug-available", h.slugAvailable)
 	r.POST("/auth/login", h.login)
 	r.GET("/me", h.me)
 	r.POST("/plugins/install", h.install)
@@ -273,6 +274,65 @@ func (e errorString) Error() string { return string(e) }
 
 // keep the plugin import used (header helpers are exercised by the real /me handler)
 var _ = plugin.UserID
+
+// Registration without a slug succeeds and returns a generated slug.
+func TestHandler_RegisterAutoSlug(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	w := do(t, r, "POST", "/auth/register", RegisterRequest{
+		Name: "Initech LLC", Plan: "starter",
+		Email: "owner@initech.com", Password: "secret123", FullName: "Bill",
+	}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register without slug = %d, want 201 (%s)", w.Code, w.Body)
+	}
+	var rr RegisterResponse
+	json.Unmarshal(w.Body.Bytes(), &rr)
+	if rr.Slug != "initech_llc" {
+		t.Errorf("generated slug = %q, want initech_llc", rr.Slug)
+	}
+
+	// no slug AND no name → 400
+	w2 := do(t, r, "POST", "/auth/register", RegisterRequest{
+		Email: "x@x.com", Password: "secret123",
+	}, nil)
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("register with neither slug nor name = %d, want 400", w2.Code)
+	}
+}
+
+// The slug-available endpoint reports validity and whether a slug is taken.
+func TestHandler_SlugAvailable(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	check := func(slug string) SlugAvailableResponse {
+		w := do(t, r, "GET", "/auth/slug-available?slug="+slug, nil, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("slug-available(%q) = %d, want 200 (%s)", slug, w.Code, w.Body)
+		}
+		var resp SlugAvailableResponse
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		return resp
+	}
+
+	if got := check("acme"); !got.Available || !got.Valid {
+		t.Errorf("acme before register = %+v, want available+valid", got)
+	}
+	if got := check("Ab"); got.Valid || got.Available {
+		t.Errorf("malformed slug = %+v, want invalid+unavailable", got)
+	}
+
+	registerAcme(t, r)
+	if got := check("acme"); got.Available {
+		t.Errorf("acme after register = %+v, want unavailable", got)
+	}
+
+	// missing query param → 400
+	w := do(t, r, "GET", "/auth/slug-available", nil, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("slug-available without param = %d, want 400", w.Code)
+	}
+}
 
 // registerAcme provisions the acme tenant and returns the owner's tenant_id by
 // reading it back through a login token.
