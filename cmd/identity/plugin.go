@@ -424,11 +424,18 @@ func requirePerm(c *gin.Context, perm string) bool {
 	return false
 }
 
+// isPlatformAdmin reports whether the caller is a platform admin, with no
+// side effect — used to bypass a same-tenant check (e.g. install/uninstall)
+// rather than gate a whole endpoint (see requirePlatformAdmin for that).
+func isPlatformAdmin(c *gin.Context) bool {
+	return plugin.UserType(c) == "platform_admin"
+}
+
 // requirePlatformAdmin aborts with 403 unless the caller is a platform admin.
 // This is a cross-tenant operation — no tenant-scoped RBAC permission applies,
 // since it isn't scoped to the caller's own tenant.
 func requirePlatformAdmin(c *gin.Context) bool {
-	if plugin.UserType(c) == "platform_admin" {
+	if isPlatformAdmin(c) {
 		return true
 	}
 	c.JSON(http.StatusForbidden, ErrorResponse{Error: "platform admin required"})
@@ -594,9 +601,11 @@ func (h *handlers) install(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "tenant_id and plugin_name required"})
 		return
 	}
-	// A caller may only install plugins for their own tenant. Core injects the
-	// trusted tenant_id from the verified JWT; reject any mismatch.
-	if caller := plugin.TenantID(c); caller == "" || caller != in.TenantID {
+	// A caller may only install plugins for their own tenant, unless they're a
+	// platform admin (cross-tenant by design — e.g. provisioning a plugin for a
+	// tenant on their behalf). Core injects the trusted tenant_id from the
+	// verified JWT; reject any mismatch for everyone else.
+	if caller := plugin.TenantID(c); !isPlatformAdmin(c) && (caller == "" || caller != in.TenantID) {
 		c.JSON(http.StatusForbidden, ErrorResponse{Error: "cannot install plugins for another tenant"})
 		return
 	}
@@ -619,8 +628,9 @@ func (h *handlers) uninstall(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "tenant_id and plugin_name required"})
 		return
 	}
-	// A caller may only uninstall plugins for their own tenant.
-	if caller := plugin.TenantID(c); caller == "" || caller != in.TenantID {
+	// A caller may only uninstall plugins for their own tenant, unless they're
+	// a platform admin (cross-tenant by design).
+	if caller := plugin.TenantID(c); !isPlatformAdmin(c) && (caller == "" || caller != in.TenantID) {
 		c.JSON(http.StatusForbidden, ErrorResponse{Error: "cannot uninstall plugins for another tenant"})
 		return
 	}

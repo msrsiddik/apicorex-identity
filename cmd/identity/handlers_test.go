@@ -13,7 +13,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	iauth "github.com/msrsiddik/apicorex-identity/internal/auth"
+	"github.com/msrsiddik/apicorex-identity/internal/migrator"
 	"github.com/msrsiddik/apicorex-identity/internal/plugin"
+	"github.com/msrsiddik/apicorex-identity/internal/pluginmgr"
 	itenant "github.com/msrsiddik/apicorex-identity/internal/tenant"
 	"github.com/msrsiddik/apicorex-identity/internal/testutil"
 )
@@ -21,6 +23,16 @@ import (
 type noopInstaller struct{}
 
 func (noopInstaller) InstallForNewTenant(context.Context, string, string) error { return nil }
+
+// emptyRegistry has no plugin manifests registered — install/uninstall calls
+// against it fail predictably ("plugin ... not registered") rather than
+// panicking on a nil installer, which is enough to prove a request reached
+// the installer (i.e. passed the tenant/platform-admin authz check).
+type emptyRegistry struct{}
+
+func (emptyRegistry) GetManifest(string) (pluginmgr.PluginManifest, bool) {
+	return pluginmgr.PluginManifest{}, false
+}
 
 // newTestRouter builds a Gin engine with the real identity handlers backed by a
 // throwaway Postgres container, plus the routes /me reads from.
@@ -31,7 +43,8 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	issuer := iauth.NewIssuer("test-secret", 15*time.Minute)
 	authSvc := iauth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
 	saga := itenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
-	h := &handlers{authSvc: authSvc, saga: saga}
+	installer := pluginmgr.NewInstaller(pg.EntClient, migrator.New(pg.EntClient, pg.DB), emptyRegistry{})
+	h := &handlers{authSvc: authSvc, saga: saga, installer: installer}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -133,6 +146,30 @@ func TestHandler_InstallCrossTenant(t *testing.T) {
 		InstallPluginRequest{TenantID: "t_self", PluginName: "sync"}, nil)
 	if w3.Code != http.StatusForbidden {
 		t.Errorf("no-context install status = %d, want 403 (%s)", w3.Code, w3.Body)
+	}
+}
+
+// A platform admin bypasses the same-tenant restriction on install/uninstall —
+// they can act on behalf of any tenant, unlike a regular tenant user.
+func TestHandler_InstallPlatformAdminBypass(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	adminHdr := map[string]string{
+		plugin.HeaderTenantID: "t_self", // even with an unrelated/no tenant context
+		plugin.HeaderUserType: "platform_admin",
+	}
+	w := do(t, r, "POST", "/plugins/install",
+		InstallPluginRequest{TenantID: "t_other", PluginName: "sync"}, adminHdr)
+	// not 403: the tenant-mismatch guard is bypassed, so it fails later (no such
+	// tenant in this test DB) — proving the request reached the installer.
+	if w.Code == http.StatusForbidden {
+		t.Errorf("platform admin install status = %d, should not be 403 (%s)", w.Code, w.Body)
+	}
+
+	w2 := do(t, r, "POST", "/plugins/uninstall",
+		UninstallPluginRequest{TenantID: "t_other", PluginName: "sync"}, adminHdr)
+	if w2.Code == http.StatusForbidden {
+		t.Errorf("platform admin uninstall status = %d, should not be 403 (%s)", w2.Code, w2.Body)
 	}
 }
 

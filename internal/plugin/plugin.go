@@ -135,6 +135,12 @@ func New(cfg Config) *Plugin {
 		option.WithTitle(cfg.Name),
 		option.WithVersion(cfg.Version),
 		option.WithDisableDocs(),
+		// Declare the same bearer scheme Core's Scalar UI uses, and require it
+		// globally, so the merged spec's "Authorize" button applies to every
+		// route this plugin registers (public routes are still callable without
+		// a token — Core enforces that, this is just the docs UI affordance).
+		option.WithSecurity("bearerAuth", option.SecurityHTTPBearer("Bearer")),
+		option.WithGlobalSecurity("bearerAuth"),
 	)
 	return &Plugin{cfg: cfg, engine: engine, spec: spec, public: map[string]bool{}, perms: map[string]string{}}
 }
