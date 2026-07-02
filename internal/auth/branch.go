@@ -154,7 +154,6 @@ func (s *Service) AddMember(ctx context.Context, tenantID, branchID string, in A
 			SetID("u_" + uuid.New().String()[:8]).
 			SetEmail(in.Email).
 			SetPasswordHash(string(hash)).
-			SetIsPlatformAdmin(false).
 			Save(ctx)
 		if err != nil {
 			return fmt.Errorf("create user: %w", err)

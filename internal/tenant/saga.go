@@ -225,7 +225,6 @@ func (s *Saga) resolveUser(ctx context.Context, email, password string) (string,
 		SetID(userID).
 		SetEmail(email).
 		SetPasswordHash(string(hash)).
-		SetIsPlatformAdmin(false).
 		Save(ctx); err != nil {
 		return "", false, err
 	}

@@ -42,12 +42,17 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	r.GET("/me", h.me)
 	r.POST("/plugins/install", h.install)
 	r.POST("/plugins/uninstall", h.uninstall)
+	r.POST("/plugins/reconcile", h.reconcilePlugin)
 	r.GET("/branches", h.listBranches)
 	r.POST("/branches", h.createBranch)
 	r.PATCH("/branches/:id", h.updateBranch)
 	r.POST("/branches/:id/members", h.addMember)
 	r.GET("/roles", h.listRoles)
 	r.POST("/roles", h.createRole)
+	r.PATCH("/tenant", h.updateTenant)
+	r.GET("/platform-admins", h.listPlatformAdmins)
+	r.POST("/platform-admins", h.grantPlatformAdmin)
+	r.DELETE("/platform-admins/:email", h.revokePlatformAdmin)
 	return r, h
 }
 
@@ -459,6 +464,117 @@ func TestHandler_RoleAuthz(t *testing.T) {
 	w = do(t, r, "POST", "/roles", body, ctxHeaders(tid, "u_x", "tenant:manage"))
 	if w.Code != http.StatusCreated {
 		t.Errorf("create role with tenant:manage = %d, want 201 (%s)", w.Code, w.Body)
+	}
+}
+
+// Tenant update requires tenant:manage; slug is never changed (the request type
+// has no slug field, and the response keeps the original slug).
+func TestHandler_UpdateTenant(t *testing.T) {
+	r, _ := newTestRouter(t)
+	registerAcme(t, r)
+	tid := loginTenantID(t, r)
+
+	// without tenant:manage → 403
+	w := do(t, r, "PATCH", "/tenant", UpdateTenantRequest{Name: "Acme Corporation"},
+		ctxHeaders(tid, "u_x", "user:read"))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("update tenant without permission = %d, want 403 (%s)", w.Code, w.Body)
+	}
+
+	// with tenant:manage → 200, name changed, slug unchanged
+	w = do(t, r, "PATCH", "/tenant", UpdateTenantRequest{Name: "Acme Corporation", Plan: "pro"},
+		ctxHeaders(tid, "u_x", "tenant:manage"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("update tenant = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	var resp TenantResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Tenant.Name != "Acme Corporation" || resp.Tenant.Plan != "pro" {
+		t.Errorf("update result = %+v, want name/plan changed", resp.Tenant)
+	}
+	if resp.Tenant.Slug != "acme" {
+		t.Errorf("slug = %q, want unchanged acme", resp.Tenant.Slug)
+	}
+}
+
+// Platform-admin management endpoints are gated on platform_admin user_type,
+// not any tenant permission — even *:* on the caller's own tenant.
+func TestHandler_PlatformAdminsManage(t *testing.T) {
+	r, _ := newTestRouter(t)
+	registerAcme(t, r)
+	tid := loginTenantID(t, r)
+
+	tenantOwnerHeaders := ctxHeaders(tid, "u_x", "*:*")
+	adminHeaders := map[string]string{plugin.HeaderUserType: "platform_admin"}
+
+	// a tenant owner, even with *:*, cannot list/grant/revoke platform admins
+	if w := do(t, r, "GET", "/platform-admins", nil, tenantOwnerHeaders); w.Code != http.StatusForbidden {
+		t.Errorf("list as tenant owner = %d, want 403", w.Code)
+	}
+	if w := do(t, r, "POST", "/platform-admins", GrantPlatformAdminRequest{Email: "owner@acme.com"}, tenantOwnerHeaders); w.Code != http.StatusForbidden {
+		t.Errorf("grant as tenant owner = %d, want 403", w.Code)
+	}
+
+	// platform admin can grant an existing user
+	w := do(t, r, "POST", "/platform-admins", GrantPlatformAdminRequest{Email: "owner@acme.com"}, adminHeaders)
+	if w.Code != http.StatusOK {
+		t.Fatalf("grant = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	var granted PlatformAdminResponse
+	json.Unmarshal(w.Body.Bytes(), &granted)
+	if granted.Admin.Email != "owner@acme.com" {
+		t.Errorf("granted = %+v, want owner@acme.com", granted.Admin)
+	}
+
+	// granting a nonexistent email fails
+	if w := do(t, r, "POST", "/platform-admins", GrantPlatformAdminRequest{Email: "ghost@x.com"}, adminHeaders); w.Code != http.StatusBadRequest {
+		t.Errorf("grant nonexistent = %d, want 400", w.Code)
+	}
+
+	// list reflects the grant
+	w = do(t, r, "GET", "/platform-admins", nil, adminHeaders)
+	var list ListPlatformAdminsResponse
+	json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list.Admins) != 1 || list.Admins[0].Email != "owner@acme.com" {
+		t.Errorf("list = %+v, want [owner@acme.com]", list.Admins)
+	}
+
+	// revoke
+	w = do(t, r, "DELETE", "/platform-admins/owner@acme.com", nil, adminHeaders)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	w = do(t, r, "GET", "/platform-admins", nil, adminHeaders)
+	json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list.Admins) != 0 {
+		t.Errorf("admins after revoke = %+v, want none", list.Admins)
+	}
+}
+
+// /plugins/reconcile is platform-admin only, regardless of tenant permissions —
+// it's a cross-tenant operation, not scoped to the caller's own tenant.
+func TestHandler_ReconcilePlatformAdminOnly(t *testing.T) {
+	r, _ := newTestRouter(t)
+	registerAcme(t, r)
+	tid := loginTenantID(t, r)
+
+	// a regular user, even an owner with *:* permissions, is not a platform admin
+	w := do(t, r, "POST", "/plugins/reconcile", ReconcilePluginRequest{PluginName: "billing"}, map[string]string{
+		plugin.HeaderTenantID:    tid,
+		plugin.HeaderUserID:      "u_x",
+		plugin.HeaderUserType:    "tenant_user",
+		plugin.HeaderPermissions: "*:*",
+	})
+	if w.Code != http.StatusForbidden {
+		t.Errorf("reconcile as tenant_user = %d, want 403 (%s)", w.Code, w.Body)
+	}
+
+	// missing plugin_name → 400, but only after the admin check passes
+	w2 := do(t, r, "POST", "/plugins/reconcile", ReconcilePluginRequest{}, map[string]string{
+		plugin.HeaderUserType: "platform_admin",
+	})
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("reconcile without plugin_name (as admin) = %d, want 400 (%s)", w2.Code, w2.Body)
 	}
 }
 

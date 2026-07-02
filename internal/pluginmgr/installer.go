@@ -127,6 +127,52 @@ func (ins *Installer) InstallForNewTenant(ctx context.Context, tenantID, schemaN
 	return nil
 }
 
+// ReconcileResult reports what happened to one tenant during a reconcile.
+type ReconcileResult struct {
+	TenantID string `json:"tenant_id"`
+	Slug     string `json:"slug"`
+	Error    string `json:"error,omitempty"` // empty on success
+}
+
+// ReconcileAll applies a plugin's currently-pending migrations to every tenant
+// that already has it installed. Each plugin migration is versioned and tracked
+// per tenant (plugin_migration_histories), so this is idempotent — a tenant
+// already on the latest version does nothing. Use this after a plugin ships a
+// new migration, to roll it out to existing installs without touching tenants
+// that never installed the plugin (new tenants get it automatically at
+// registration via InstallForNewTenant).
+func (ins *Installer) ReconcileAll(ctx context.Context, pluginName string) ([]ReconcileResult, error) {
+	migrations, err := ins.fetchMigrations(ctx, pluginName)
+	if err != nil {
+		return nil, fmt.Errorf("fetch migrations for %q: %w", pluginName, err)
+	}
+	if len(migrations) == 0 {
+		return nil, nil
+	}
+
+	installs, err := ins.entClient.PluginInstall.Query().
+		Where(plugininstall.PluginName(pluginName)).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list installs: %w", err)
+	}
+
+	results := make([]ReconcileResult, 0, len(installs))
+	for _, pi := range installs {
+		t, err := ins.entClient.Tenant.Get(ctx, pi.TenantID)
+		if err != nil {
+			results = append(results, ReconcileResult{TenantID: pi.TenantID, Error: fmt.Sprintf("tenant not found: %v", err)})
+			continue
+		}
+		res := ReconcileResult{TenantID: t.ID, Slug: t.Slug}
+		if err := ins.migrator.RunForTenant(ctx, t.ID, t.SchemaName, pluginName, migrations); err != nil {
+			res.Error = err.Error()
+			log.Printf("[pluginmgr] reconcile %q failed for tenant %s: %v", pluginName, t.ID, err)
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
 // UninstallInput controls an uninstall.
 type UninstallInput struct {
 	TenantID   string

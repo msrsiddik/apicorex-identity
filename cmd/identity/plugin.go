@@ -46,6 +46,16 @@ type SlugSuggestResponse struct {
 	Slug string `json:"slug"` // a valid, available slug derived from name
 }
 
+type UpdateTenantRequest struct {
+	Name string `json:"name" example:"Acme Corporation"`
+	Plan string `json:"plan" example:"pro"`
+	// slug is immutable and intentionally not accepted here.
+}
+
+type TenantResponse struct {
+	Tenant auth.TenantInfo `json:"tenant"`
+}
+
 type LoginRequest struct {
 	Slug     string `json:"slug"     example:"acme"`
 	Email    string `json:"email"    example:"owner@acme.com"`
@@ -108,6 +118,27 @@ type UninstallPluginRequest struct {
 
 type UninstallPluginResponse struct {
 	Message string `json:"message" example:"plugin uninstalled"`
+}
+
+type ReconcilePluginRequest struct {
+	PluginName string `json:"plugin_name" example:"billing"`
+}
+
+type ReconcilePluginResponse struct {
+	PluginName string                     `json:"plugin_name"`
+	Tenants    []pluginmgr.ReconcileResult `json:"tenants"`
+}
+
+type ListPlatformAdminsResponse struct {
+	Admins []auth.PlatformAdminInfo `json:"admins"`
+}
+
+type GrantPlatformAdminRequest struct {
+	Email string `json:"email" example:"ops@yourcompany.com"`
+}
+
+type PlatformAdminResponse struct {
+	Admin auth.PlatformAdminInfo `json:"admin"`
 }
 
 type CreateBranchRequest struct {
@@ -258,6 +289,38 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Request(new(UninstallPluginRequest)),
 		option.Response(http.StatusOK, new(UninstallPluginResponse)),
 	)
+	p.POST("/plugins/reconcile", h.reconcilePlugin,
+		option.Summary("Roll out a plugin's pending migrations to every tenant that has it installed"),
+		option.Description("Platform admin only. Applies newly-added migrations to all existing installs of "+
+			"plugin_name (each tenant's applied versions are tracked, so this is safe to re-run). New tenants "+
+			"already get the plugin automatically at registration — this is for tenants that installed it earlier."),
+		option.Tags("plugins"),
+		option.Request(new(ReconcilePluginRequest)),
+		option.Response(http.StatusOK, new(ReconcilePluginResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+
+	p.GET("/platform-admins", h.listPlatformAdmins,
+		option.Summary("List platform admins"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(ListPlatformAdminsResponse)),
+	)
+	p.POST("/platform-admins", h.grantPlatformAdmin,
+		option.Summary("Grant an existing user platform admin"),
+		option.Description("Platform admin only. The user must already have a global account (matched by email). "+
+			"Takes effect immediately on every identity instance (it's a DB write, unlike the PLATFORM_ADMIN_EMAILS "+
+			"boot-time bootstrap)."),
+		option.Tags("platform-admins"),
+		option.Request(new(GrantPlatformAdminRequest)),
+		option.Response(http.StatusOK, new(PlatformAdminResponse)),
+	)
+	p.Handle(http.MethodDelete, "/platform-admins/:email", h.revokePlatformAdmin,
+		option.Summary("Revoke a user's platform admin"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
 
 	p.GET("/branches", h.listBranches,
 		option.Summary("List branches of the caller's tenant"),
@@ -325,6 +388,15 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Response(http.StatusOK, new(MessageResponse)),
 	)
 
+	p.Handle(http.MethodPatch, "/tenant", h.updateTenant,
+		option.Summary("Update the caller's tenant"),
+		option.Description("Changes the display name and/or plan. The slug is immutable "+
+			"(it names the tenant's schema and is the login key) and cannot be changed."),
+		option.Tags("tenant"),
+		option.Request(new(UpdateTenantRequest)),
+		option.Response(http.StatusOK, new(TenantResponse)),
+	)
+
 	// Route permissions — Core enforces these at the gateway before proxying.
 	p.RequirePermission(http.MethodGet, "/branches", rbac.PermBranchRead)
 	p.RequirePermission(http.MethodPost, "/branches", rbac.PermBranchWrite)
@@ -336,6 +408,7 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.RequirePermission(http.MethodPost, "/roles", rbac.PermTenantManage)
 	p.RequirePermission(http.MethodPatch, "/roles/:id", rbac.PermTenantManage)
 	p.RequirePermission(http.MethodDelete, "/roles/:id", rbac.PermTenantManage)
+	p.RequirePermission(http.MethodPatch, "/tenant", rbac.PermTenantManage)
 	// /branches/switch and /branches/default act on the caller's own membership —
 	// any authenticated user may; no permission required.
 }
@@ -348,6 +421,17 @@ func requirePerm(c *gin.Context, perm string) bool {
 		return true
 	}
 	c.JSON(http.StatusForbidden, ErrorResponse{Error: "missing permission: " + perm})
+	return false
+}
+
+// requirePlatformAdmin aborts with 403 unless the caller is a platform admin.
+// This is a cross-tenant operation — no tenant-scoped RBAC permission applies,
+// since it isn't scoped to the caller's own tenant.
+func requirePlatformAdmin(c *gin.Context) bool {
+	if plugin.UserType(c) == "platform_admin" {
+		return true
+	}
+	c.JSON(http.StatusForbidden, ErrorResponse{Error: "platform admin required"})
 	return false
 }
 
@@ -553,6 +637,72 @@ func (h *handlers) uninstall(c *gin.Context) {
 	c.JSON(http.StatusOK, UninstallPluginResponse{Message: msg})
 }
 
+func (h *handlers) reconcilePlugin(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in ReconcilePluginRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if in.PluginName == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "plugin_name required"})
+		return
+	}
+	results, err := h.installer.ReconcileAll(c.Request.Context(), in.PluginName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ReconcilePluginResponse{PluginName: in.PluginName, Tenants: results})
+}
+
+func (h *handlers) listPlatformAdmins(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	admins, err := h.authSvc.ListPlatformAdmins(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListPlatformAdminsResponse{Admins: admins})
+}
+
+func (h *handlers) grantPlatformAdmin(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in GrantPlatformAdminRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if in.Email == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "email required"})
+		return
+	}
+	admin, err := h.authSvc.GrantPlatformAdmin(c.Request.Context(), in.Email)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, PlatformAdminResponse{Admin: *admin})
+}
+
+func (h *handlers) revokePlatformAdmin(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	email := c.Param("email")
+	if err := h.authSvc.RevokePlatformAdmin(c.Request.Context(), email); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "platform admin revoked"})
+}
+
 func (h *handlers) listBranches(c *gin.Context) {
 	tenantID := plugin.TenantID(c)
 	if tenantID == "" {
@@ -751,6 +901,28 @@ func (h *handlers) deleteRole(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, MessageResponse{Message: "role deleted"})
+}
+
+func (h *handlers) updateTenant(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermTenantManage) {
+		return
+	}
+	var in UpdateTenantRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	t, err := h.authSvc.UpdateTenant(c.Request.Context(), tenantID, in.Name, in.Plan)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TenantResponse{Tenant: *t})
 }
 
 // accessTokenJTIExp parses (without verifying — Core already verified) the bearer

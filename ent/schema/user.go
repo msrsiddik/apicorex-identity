@@ -28,6 +28,9 @@ func (User) Fields() []ent.Field {
 		field.String("id").Unique().Immutable(), // "u_<uuid8>"
 		field.String("email").Unique(),
 		field.String("password_hash").Sensitive(),
+		// is_platform_admin is DB-authoritative (so every identity instance agrees,
+		// unlike an env var that can drift across replicas). PLATFORM_ADMIN_EMAILS
+		// only bootstraps it at boot; POST/DELETE /platform-admins manage it after.
 		field.Bool("is_platform_admin").Default(false),
 		field.Time("created_at").Default(time.Now).Immutable(),
 	}

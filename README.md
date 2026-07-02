@@ -67,7 +67,8 @@ defense-in-depth. See [docs/rbac-design.md](docs/rbac-design.md).
 **Slug rules:** a tenant slug becomes part of the schema name (`tenant_<slug>`),
 so it must be a safe identifier — 3–32 chars, lowercase, starting with a letter,
 containing only letters, digits, and underscores. Invalid slugs are rejected at
-registration with `400`.
+registration with `400`. The slug is **immutable** once set — it names the schema
+and is the login key — so `PATCH /tenant` changes only the display name / plan.
 
 ---
 
@@ -121,6 +122,7 @@ compose file in the [Core repo](../apicorex) instead.
 | `PLUGIN_ADDR` | `:50051` | Local bind address |
 | `PLUGIN_BASE_URL` | derived | URL Core dials back (set in docker/k8s) |
 | `REDIS_URL` | no | Enables immediate logout (token denylist) |
+| `PLATFORM_ADMIN_EMAILS` | no | Comma-separated emails to bootstrap as platform admins on boot (only grants; only affects users who have already registered). `is_platform_admin` (a DB column) is the actual source of truth, so it's consistent across every instance — manage it after boot via `/platform-admins`. |
 
 ---
 
@@ -145,8 +147,13 @@ compose file in the [Core repo](../apicorex) instead.
 | POST | `/roles` | no | `tenant:manage` | Create a custom role |
 | PATCH | `/roles/:id` | no | `tenant:manage` | Update a custom role |
 | DELETE | `/roles/:id` | no | `tenant:manage` | Delete a custom role |
+| PATCH | `/tenant` | no | `tenant:manage` | Update the tenant's display name / plan (slug is immutable) |
 | POST | `/plugins/install` | no | `plugin:install` | Install a plugin for **your own** tenant |
 | POST | `/plugins/uninstall` | no | `plugin:uninstall` | Uninstall (`drop_data` keeps or drops tables) |
+| POST | `/plugins/reconcile` | no | *platform admin* | Roll a plugin's newly-added migrations out to every tenant that has it installed |
+| GET | `/platform-admins` | no | *platform admin* | List platform admins |
+| POST | `/platform-admins` | no | *platform admin* | Grant an existing user platform admin |
+| DELETE | `/platform-admins/:email` | no | *platform admin* | Revoke a user's platform admin |
 
 > The **Permission** column is what Core's gateway requires before proxying
 > (handlers re-check it too). `—` means any authenticated user — `/branches/switch`
@@ -156,6 +163,26 @@ compose file in the [Core repo](../apicorex) instead.
 > caller's JWT tenant — you cannot manage another tenant's plugins (`403`
 > otherwise). New tenants automatically get every currently-installed plugin's
 > tables during registration.
+>
+> `/plugins/reconcile` is different from install/uninstall: it's cross-tenant by
+> design (gated on `X-ApiCoreX-User-Type: platform_admin`, not a tenant
+> permission), for rolling out a plugin's new migration version to every tenant
+> that already installed it — each tenant's applied versions are tracked
+> (`plugin_migration_histories`), so it's safe to call repeatedly.
+>
+> **Platform admin is a DB column (`users.is_platform_admin`), not a tenant
+> role** — a tenant's `owner` role (even with `*:*`) does not make you a
+> platform admin, and vice versa. `PLATFORM_ADMIN_EMAILS` only bootstraps it
+> once at boot for users who've already registered; `/platform-admins`
+> grants/revokes it after that, taking effect immediately on every instance
+> (no restart, no drift between replicas — unlike an env-only flag would have).
+>
+> **`POST /platform-admins` never creates an account** — it only flags an
+> *existing* global user (matched by email); there's no password field. If the
+> email has no account yet, register a tenant with it or add it as a branch
+> member first (both admin-create a global user), then grant platform admin.
+> This is intentional: account creation and privilege escalation stay separate
+> steps, so granting platform admin can never be used to spray new credentials.
 
 ---
 

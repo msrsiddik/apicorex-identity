@@ -21,11 +21,14 @@ func (Tenant) Annotations() []schema.Annotation {
 func (Tenant) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("id").Unique().Immutable(),
-		field.String("slug").Unique(),
+		// slug is a permanent identifier: it names the tenant's Postgres schema
+		// (tenant_<slug>) and is the login key, so it cannot change after creation.
+		// Only the display name / plan are editable.
+		field.String("slug").Unique().Immutable(),
 		field.String("name"),
 		field.String("plan").Default("starter"),
 		field.String("status").Default("provisioning"),
-		field.String("schema_name").Unique(),
+		field.String("schema_name").Unique().Immutable(),
 	}
 }
 

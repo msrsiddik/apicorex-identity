@@ -31,20 +31,6 @@ func (tu *TenantUpdate) Where(ps ...predicate.Tenant) *TenantUpdate {
 	return tu
 }
 
-// SetSlug sets the "slug" field.
-func (tu *TenantUpdate) SetSlug(s string) *TenantUpdate {
-	tu.mutation.SetSlug(s)
-	return tu
-}
-
-// SetNillableSlug sets the "slug" field if the given value is not nil.
-func (tu *TenantUpdate) SetNillableSlug(s *string) *TenantUpdate {
-	if s != nil {
-		tu.SetSlug(*s)
-	}
-	return tu
-}
-
 // SetName sets the "name" field.
 func (tu *TenantUpdate) SetName(s string) *TenantUpdate {
 	tu.mutation.SetName(s)
@@ -83,20 +69,6 @@ func (tu *TenantUpdate) SetStatus(s string) *TenantUpdate {
 func (tu *TenantUpdate) SetNillableStatus(s *string) *TenantUpdate {
 	if s != nil {
 		tu.SetStatus(*s)
-	}
-	return tu
-}
-
-// SetSchemaName sets the "schema_name" field.
-func (tu *TenantUpdate) SetSchemaName(s string) *TenantUpdate {
-	tu.mutation.SetSchemaName(s)
-	return tu
-}
-
-// SetNillableSchemaName sets the "schema_name" field if the given value is not nil.
-func (tu *TenantUpdate) SetNillableSchemaName(s *string) *TenantUpdate {
-	if s != nil {
-		tu.SetSchemaName(*s)
 	}
 	return tu
 }
@@ -250,9 +222,6 @@ func (tu *TenantUpdate) sqlSave(ctx context.Context) (n int, err error) {
 			}
 		}
 	}
-	if value, ok := tu.mutation.Slug(); ok {
-		_spec.SetField(tenant.FieldSlug, field.TypeString, value)
-	}
 	if value, ok := tu.mutation.Name(); ok {
 		_spec.SetField(tenant.FieldName, field.TypeString, value)
 	}
@@ -261,9 +230,6 @@ func (tu *TenantUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := tu.mutation.Status(); ok {
 		_spec.SetField(tenant.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := tu.mutation.SchemaName(); ok {
-		_spec.SetField(tenant.FieldSchemaName, field.TypeString, value)
 	}
 	if tu.mutation.TenantUsersCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -431,20 +397,6 @@ type TenantUpdateOne struct {
 	mutation *TenantMutation
 }
 
-// SetSlug sets the "slug" field.
-func (tuo *TenantUpdateOne) SetSlug(s string) *TenantUpdateOne {
-	tuo.mutation.SetSlug(s)
-	return tuo
-}
-
-// SetNillableSlug sets the "slug" field if the given value is not nil.
-func (tuo *TenantUpdateOne) SetNillableSlug(s *string) *TenantUpdateOne {
-	if s != nil {
-		tuo.SetSlug(*s)
-	}
-	return tuo
-}
-
 // SetName sets the "name" field.
 func (tuo *TenantUpdateOne) SetName(s string) *TenantUpdateOne {
 	tuo.mutation.SetName(s)
@@ -483,20 +435,6 @@ func (tuo *TenantUpdateOne) SetStatus(s string) *TenantUpdateOne {
 func (tuo *TenantUpdateOne) SetNillableStatus(s *string) *TenantUpdateOne {
 	if s != nil {
 		tuo.SetStatus(*s)
-	}
-	return tuo
-}
-
-// SetSchemaName sets the "schema_name" field.
-func (tuo *TenantUpdateOne) SetSchemaName(s string) *TenantUpdateOne {
-	tuo.mutation.SetSchemaName(s)
-	return tuo
-}
-
-// SetNillableSchemaName sets the "schema_name" field if the given value is not nil.
-func (tuo *TenantUpdateOne) SetNillableSchemaName(s *string) *TenantUpdateOne {
-	if s != nil {
-		tuo.SetSchemaName(*s)
 	}
 	return tuo
 }
@@ -680,9 +618,6 @@ func (tuo *TenantUpdateOne) sqlSave(ctx context.Context) (_node *Tenant, err err
 			}
 		}
 	}
-	if value, ok := tuo.mutation.Slug(); ok {
-		_spec.SetField(tenant.FieldSlug, field.TypeString, value)
-	}
 	if value, ok := tuo.mutation.Name(); ok {
 		_spec.SetField(tenant.FieldName, field.TypeString, value)
 	}
@@ -691,9 +626,6 @@ func (tuo *TenantUpdateOne) sqlSave(ctx context.Context) (_node *Tenant, err err
 	}
 	if value, ok := tuo.mutation.Status(); ok {
 		_spec.SetField(tenant.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := tuo.mutation.SchemaName(); ok {
-		_spec.SetField(tenant.FieldSchemaName, field.TypeString, value)
 	}
 	if tuo.mutation.TenantUsersCleared() {
 		edge := &sqlgraph.EdgeSpec{

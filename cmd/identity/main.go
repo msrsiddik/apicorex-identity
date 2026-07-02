@@ -75,6 +75,19 @@ func main() {
 	mig := migrator.New(entClient, db)
 	installer := pluginmgr.NewInstaller(entClient, mig, coreRegistry)
 
+	// bootstrap: grant is_platform_admin to any already-registered user in
+	// PLATFORM_ADMIN_EMAILS. This only adds the flag (never revokes) and only
+	// affects users who exist yet — it's a one-time seed, not the source of
+	// truth. Manage admins after boot via POST/DELETE /platform-admins.
+	if csv := os.Getenv("PLATFORM_ADMIN_EMAILS"); csv != "" {
+		emails := iauth.ParsePlatformAdminEmails(csv)
+		granted, err := iauth.SyncPlatformAdminsFromEnv(ctx, entClient, emails)
+		if err != nil {
+			log.Fatalf("bootstrap platform admins: %v", err)
+		}
+		log.Printf("[identity] platform admin bootstrap: %d user(s) granted from %d configured email(s)", granted, len(emails))
+	}
+
 	saga := itenant.NewSaga(entClient, db, dsn, installer, rbacStore)
 	authSvc := iauth.NewService(entClient, db, issuer, denylist, rbacStore)
 

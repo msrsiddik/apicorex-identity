@@ -106,6 +106,92 @@ func TestRefresh_ReresolvesPermissions(t *testing.T) {
 	}
 }
 
+// Platform admin is DB-authoritative: bootstrap grants it to a registered
+// user, login reflects it in user_type, and a tenant owner with *:*
+// permissions is NOT automatically a platform admin — those are unrelated.
+// Revoking clears it immediately for the next login.
+func TestPlatformAdmin_BootstrapGrantRevoke(t *testing.T) {
+	ctx := context.Background()
+	pg := testutil.NewPostgres(t)
+	register(t, pg)
+
+	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+
+	// owner is a tenant owner (full *:* permission) but NOT a platform admin yet
+	res, err := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if got := decodeClaims(t, res.AccessToken).UserType; got != "tenant_user" {
+		t.Errorf("user_type before bootstrap = %q, want tenant_user", got)
+	}
+
+	// bootstrap from env-configured emails only grants existing users
+	emails := auth.ParsePlatformAdminEmails("owner@acme.com, nobody-yet@x.com")
+	granted, err := auth.SyncPlatformAdminsFromEnv(ctx, pg.EntClient, emails)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if granted != 1 {
+		t.Errorf("granted = %d, want 1 (only the registered email)", granted)
+	}
+	res2, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
+	if got := decodeClaims(t, res2.AccessToken).UserType; got != "platform_admin" {
+		t.Errorf("user_type after bootstrap = %q, want platform_admin", got)
+	}
+
+	// re-running bootstrap doesn't double-count (only WHERE is_platform_admin=false matches)
+	if granted2, _ := auth.SyncPlatformAdminsFromEnv(ctx, pg.EntClient, emails); granted2 != 0 {
+		t.Errorf("second bootstrap granted = %d, want 0 (already set)", granted2)
+	}
+
+	// GrantPlatformAdmin promotes another existing user immediately
+	if err := svc.AddMember(ctx, decodeClaims(t, res.AccessToken).TenantID, mainBranchID(t, ctx, svc, decodeClaims(t, res.AccessToken).TenantID), auth.AddMemberInput{
+		Email: "staff@acme.com", Role: "member", Password: "welcome123", FullName: "Staff",
+	}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if _, err := svc.GrantPlatformAdmin(ctx, "staff@acme.com"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	staffLogin, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "staff@acme.com", Password: "welcome123"})
+	if got := decodeClaims(t, staffLogin.AccessToken).UserType; got != "platform_admin" {
+		t.Errorf("staff user_type after grant = %q, want platform_admin", got)
+	}
+
+	// ListPlatformAdmins reflects both
+	admins, err := svc.ListPlatformAdmins(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(admins) != 2 {
+		t.Errorf("admins = %v, want 2", admins)
+	}
+
+	// RevokePlatformAdmin takes effect on the next login, immediately
+	if err := svc.RevokePlatformAdmin(ctx, "owner@acme.com"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	res3, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
+	if got := decodeClaims(t, res3.AccessToken).UserType; got != "tenant_user" {
+		t.Errorf("user_type after revoke = %q, want tenant_user", got)
+	}
+
+	// granting an email with no account fails (no user to flag)
+	if _, err := svc.GrantPlatformAdmin(ctx, "ghost@x.com"); err == nil {
+		t.Error("granting a nonexistent user should fail")
+	}
+}
+
+func mainBranchID(t *testing.T, ctx context.Context, svc *auth.Service, tenantID string) string {
+	t.Helper()
+	branches, err := svc.ListBranches(ctx, tenantID)
+	if err != nil || len(branches) == 0 {
+		t.Fatalf("list branches: %v", err)
+	}
+	return branches[0].ID
+}
+
 // Baseline floor: a member whose role has no permissions still gets the neutral
 // read-only baseline (user:read, branch:read) in their token.
 func TestLogin_BaselineFloor(t *testing.T) {
