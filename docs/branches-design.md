@@ -3,7 +3,14 @@
 Status: **implemented** (identity-side). Core-side branch header injection baki.
 Date: 2026-06-29
 
-## Implemented decisions
+> **Superseded (2026-07-03):** membership model changed to **one row per
+> (user, tenant)** — a user is active in exactly one branch at a time, with one
+> role for the whole tenant. `is_default` and `/branches/default` removed;
+> `/branches/switch` now moves the existing membership instead of creating a
+> second one. The rest of this doc reflects the original (per-branch-row)
+> decision and is kept for history.
+
+## Implemented decisions (superseded, see note above)
 
 - Membership granularity: **per (user, tenant, branch)** — branch-prati alada row + role.
 - Login: **default branch** (`is_default`), chooser na. Tenant chooser unchanged.

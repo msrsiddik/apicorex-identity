@@ -166,7 +166,6 @@ var (
 		{Name: "id", Type: field.TypeString, Unique: true},
 		{Name: "branch_id", Type: field.TypeString},
 		{Name: "role_id", Type: field.TypeString},
-		{Name: "is_default", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "tenant_id", Type: field.TypeString},
 		{Name: "user_id", Type: field.TypeString},
@@ -179,32 +178,27 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "tenant_users_tenants_tenant_users",
-				Columns:    []*schema.Column{TenantUsersColumns[5]},
+				Columns:    []*schema.Column{TenantUsersColumns[4]},
 				RefColumns: []*schema.Column{TenantsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "tenant_users_users_tenant_users",
-				Columns:    []*schema.Column{TenantUsersColumns[6]},
+				Columns:    []*schema.Column{TenantUsersColumns[5]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 		},
 		Indexes: []*schema.Index{
 			{
-				Name:    "tenantuser_user_id_tenant_id_branch_id",
-				Unique:  true,
-				Columns: []*schema.Column{TenantUsersColumns[6], TenantUsersColumns[5], TenantUsersColumns[1]},
-			},
-			{
 				Name:    "tenantuser_user_id_tenant_id",
-				Unique:  false,
-				Columns: []*schema.Column{TenantUsersColumns[6], TenantUsersColumns[5]},
+				Unique:  true,
+				Columns: []*schema.Column{TenantUsersColumns[5], TenantUsersColumns[4]},
 			},
 			{
 				Name:    "tenantuser_tenant_id",
 				Unique:  false,
-				Columns: []*schema.Column{TenantUsersColumns[5]},
+				Columns: []*schema.Column{TenantUsersColumns[4]},
 			},
 		},
 	}

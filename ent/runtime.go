@@ -87,12 +87,8 @@ func init() {
 	tenant.DefaultStatus = tenantDescStatus.Default.(string)
 	tenantuserFields := schema.TenantUser{}.Fields()
 	_ = tenantuserFields
-	// tenantuserDescIsDefault is the schema descriptor for is_default field.
-	tenantuserDescIsDefault := tenantuserFields[5].Descriptor()
-	// tenantuser.DefaultIsDefault holds the default value on creation for the is_default field.
-	tenantuser.DefaultIsDefault = tenantuserDescIsDefault.Default.(bool)
 	// tenantuserDescCreatedAt is the schema descriptor for created_at field.
-	tenantuserDescCreatedAt := tenantuserFields[6].Descriptor()
+	tenantuserDescCreatedAt := tenantuserFields[5].Descriptor()
 	// tenantuser.DefaultCreatedAt holds the default value on creation for the created_at field.
 	tenantuser.DefaultCreatedAt = tenantuserDescCreatedAt.Default.(func() time.Time)
 	userFields := schema.User{}.Fields()

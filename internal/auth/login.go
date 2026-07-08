@@ -84,7 +84,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		return nil, errors.New("invalid credentials")
 	}
 
-	// 2. memberships
+	// 2. memberships (exactly one row per tenant — the user's single active branch there)
 	memberships, err := s.entClient.TenantUser.Query().
 		Where(tenantuser.UserID(u.ID)).
 		Order(ent.Asc(tenantuser.FieldCreatedAt)).
@@ -96,8 +96,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		return nil, errors.New("no tenant access")
 	}
 
-	// 3. pick the tenant. memberships may hold several rows per tenant (one per
-	// branch), so we resolve to a tenant first, then to its default branch.
+	// 3. pick the tenant.
 	var t *ent.Tenant
 	tenantIDs := distinctTenantIDs(memberships)
 	switch {
@@ -119,9 +118,8 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		return nil, s.multiTenantError(ctx, tenantIDs)
 	}
 
-	// 4. pick the branch within the tenant: the membership flagged is_default,
-	// else the first (oldest) membership for this tenant.
-	m := defaultMembership(memberships, t.ID)
+	// 4. the membership for this tenant carries the user's current branch.
+	m := membershipForTenant(memberships, t.ID)
 	if m == nil {
 		return nil, errors.New("no access to tenant")
 	}
@@ -155,26 +153,23 @@ func (s *Service) Refresh(ctx context.Context, tokenID string) (*LoginResult, er
 		return nil, errors.New("user not found")
 	}
 
-	// re-load the membership for this exact branch (falls back to any membership
-	// in the tenant if the token predates branches / branch_id is empty).
-	q := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(t.ID))
-	if rt.BranchID != "" {
-		q = q.Where(tenantuser.BranchID(rt.BranchID))
-	}
-	roleID := ""
-	if m, _ := q.First(ctx); m != nil {
-		roleID = m.RoleID
+	// re-load the membership: role and current branch are re-read fresh (not
+	// trusted from the old token), since the user may have switched branches or
+	// had their role changed since this refresh token was issued.
+	m, err := s.entClient.TenantUser.Query().
+		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(t.ID)).Only(ctx)
+	if err != nil {
+		return nil, errors.New("no access to tenant")
 	}
 
 	var b *ent.Branch
-	if rt.BranchID != "" {
-		if b, err = s.entClient.Branch.Get(ctx, rt.BranchID); err != nil {
+	if m.BranchID != "" {
+		if b, err = s.entClient.Branch.Get(ctx, m.BranchID); err != nil {
 			return nil, errors.New("branch not available")
 		}
 	}
 
-	res, err := s.issueTokens(ctx, u, t, b, roleID)
+	res, err := s.issueTokens(ctx, u, t, b, m.RoleID)
 	if err != nil {
 		return nil, err
 	}
@@ -284,22 +279,14 @@ func contains(ids []string, id string) bool {
 	return false
 }
 
-// defaultMembership returns the membership a user lands on for a tenant: the one
-// flagged is_default, else the first membership for that tenant.
-func defaultMembership(ms []*ent.TenantUser, tenantID string) *ent.TenantUser {
-	var first *ent.TenantUser
+// membershipForTenant returns the user's (single) membership row for a tenant.
+func membershipForTenant(ms []*ent.TenantUser, tenantID string) *ent.TenantUser {
 	for _, m := range ms {
-		if m.TenantID != tenantID {
-			continue
-		}
-		if m.IsDefault {
+		if m.TenantID == tenantID {
 			return m
 		}
-		if first == nil {
-			first = m
-		}
 	}
-	return first
+	return nil
 }
 
 // Profile holds the tenant-scoped PII returned by /me.

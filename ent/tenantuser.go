@@ -27,8 +27,6 @@ type TenantUser struct {
 	BranchID string `json:"branch_id,omitempty"`
 	// RoleID holds the value of the "role_id" field.
 	RoleID string `json:"role_id,omitempty"`
-	// IsDefault holds the value of the "is_default" field.
-	IsDefault bool `json:"is_default,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -75,8 +73,6 @@ func (*TenantUser) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case tenantuser.FieldIsDefault:
-			values[i] = new(sql.NullBool)
 		case tenantuser.FieldID, tenantuser.FieldUserID, tenantuser.FieldTenantID, tenantuser.FieldBranchID, tenantuser.FieldRoleID:
 			values[i] = new(sql.NullString)
 		case tenantuser.FieldCreatedAt:
@@ -125,12 +121,6 @@ func (tu *TenantUser) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field role_id", values[i])
 			} else if value.Valid {
 				tu.RoleID = value.String
-			}
-		case tenantuser.FieldIsDefault:
-			if value, ok := values[i].(*sql.NullBool); !ok {
-				return fmt.Errorf("unexpected type %T for field is_default", values[i])
-			} else if value.Valid {
-				tu.IsDefault = value.Bool
 			}
 		case tenantuser.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -195,9 +185,6 @@ func (tu *TenantUser) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("role_id=")
 	builder.WriteString(tu.RoleID)
-	builder.WriteString(", ")
-	builder.WriteString("is_default=")
-	builder.WriteString(fmt.Sprintf("%v", tu.IsDefault))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(tu.CreatedAt.Format(time.ANSIC))

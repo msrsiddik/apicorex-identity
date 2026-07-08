@@ -135,8 +135,8 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) (string, error) {
 		})
 	}
 
-	// Step 2b: membership mapping (shared.tenant_users), owner role, scoped to
-	// the default branch and flagged as the user's default landing branch.
+	// Step 2b: membership mapping (shared.tenant_users), owner role, active in
+	// the default branch.
 	ownerRoleID, err := s.rbac.SystemRoleID(ctx, "owner")
 	if err != nil {
 		s.compensate(ctx, steps)
@@ -148,7 +148,6 @@ func (s *Saga) Register(ctx context.Context, in RegisterInput) (string, error) {
 		SetUserID(userID).
 		SetTenantID(t.ID).
 		SetBranchID(branchID).
-		SetIsDefault(true).
 		SetRoleID(ownerRoleID).
 		Save(ctx); err != nil {
 		s.compensate(ctx, steps)

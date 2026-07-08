@@ -56,6 +56,22 @@ type TenantResponse struct {
 	Tenant auth.TenantInfo `json:"tenant"`
 }
 
+type ListTenantPluginsResponse struct {
+	Plugins []string `json:"plugins"`
+}
+
+type ListTenantsResponse struct {
+	Tenants []auth.TenantSummary `json:"tenants"`
+}
+
+type SetTenantStatusRequest struct {
+	Status string `json:"status" example:"suspended"` // "active" or "suspended"
+}
+
+type TenantSummaryResponse struct {
+	Tenant auth.TenantSummary `json:"tenant"`
+}
+
 type LoginRequest struct {
 	Slug     string `json:"slug"     example:"acme"`
 	Email    string `json:"email"    example:"owner@acme.com"`
@@ -129,6 +145,15 @@ type ReconcilePluginResponse struct {
 	Tenants    []pluginmgr.ReconcileResult `json:"tenants"`
 }
 
+type InstallAllRequest struct {
+	PluginName string `json:"plugin_name" example:"billing"`
+}
+
+type InstallAllResponse struct {
+	PluginName string                     `json:"plugin_name"`
+	Tenants    []pluginmgr.ReconcileResult `json:"tenants"`
+}
+
 type ListPlatformAdminsResponse struct {
 	Admins []auth.PlatformAdminInfo `json:"admins"`
 }
@@ -176,10 +201,6 @@ type SwitchBranchRequest struct {
 	BranchID string `json:"branch_id" example:"br_1a2b3c4d"`
 }
 
-type SetDefaultBranchRequest struct {
-	BranchID string `json:"branch_id" example:"br_1a2b3c4d"`
-}
-
 type MessageResponse struct {
 	Message string `json:"message"`
 }
@@ -221,6 +242,14 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/refresh")
 	p.Public("/auth/slug-available")
 	p.Public("/auth/slug-suggest")
+	p.Public("/admin")
+
+	p.GET("/admin", serveAdmin,
+		option.Summary("Platform admin UI"),
+		option.Description("A self-contained HTML page. It authenticates itself via /auth/login and calls "+
+			"the JSON API with the resulting token — no separate session or server-side auth of its own."),
+		option.Tags("platform-admins"),
+	)
 
 	p.POST("/auth/register", h.register,
 		option.Summary("Register a new tenant"),
@@ -289,6 +318,22 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Request(new(UninstallPluginRequest)),
 		option.Response(http.StatusOK, new(UninstallPluginResponse)),
 	)
+	p.GET("/tenants/:id/plugins", h.listTenantPlugins,
+		option.Summary("List a tenant's installed plugins"),
+		option.Description("Platform admin only (use /me's installed_plugins for your own tenant)."),
+		option.Tags("plugins"),
+		option.Response(http.StatusOK, new(ListTenantPluginsResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+	p.POST("/plugins/install-all", h.installAll,
+		option.Summary("Install a plugin for every active tenant that doesn't already have it"),
+		option.Description("Platform admin only. Provisioning/suspended tenants are skipped; tenants that "+
+			"already have the plugin are reported as a no-op success, so this is safe to call repeatedly."),
+		option.Tags("plugins"),
+		option.Request(new(InstallAllRequest)),
+		option.Response(http.StatusOK, new(InstallAllResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
 	p.POST("/plugins/reconcile", h.reconcilePlugin,
 		option.Summary("Roll out a plugin's pending migrations to every tenant that has it installed"),
 		option.Description("Platform admin only. Applies newly-added migrations to all existing installs of "+
@@ -297,6 +342,14 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Tags("plugins"),
 		option.Request(new(ReconcilePluginRequest)),
 		option.Response(http.StatusOK, new(ReconcilePluginResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+
+	p.GET("/tenants", h.listTenants,
+		option.Summary("List all tenants"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(ListTenantsResponse)),
 		option.Response(http.StatusForbidden, new(ErrorResponse)),
 	)
 
@@ -357,14 +410,6 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Response(http.StatusOK, new(LoginResponse)),
 		option.Response(http.StatusForbidden, new(ErrorResponse)),
 	)
-	p.POST("/branches/default", h.setDefaultBranch,
-		option.Summary("Set the caller's default branch"),
-		option.Description("The branch login lands on for this tenant going forward."),
-		option.Tags("branches"),
-		option.Request(new(SetDefaultBranchRequest)),
-		option.Response(http.StatusOK, new(MessageResponse)),
-	)
-
 	p.GET("/roles", h.listRoles,
 		option.Summary("List roles (system + tenant custom)"),
 		option.Tags("roles"),
@@ -396,6 +441,15 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Request(new(UpdateTenantRequest)),
 		option.Response(http.StatusOK, new(TenantResponse)),
 	)
+	p.Handle(http.MethodPatch, "/tenants/:id/status", h.setTenantStatus,
+		option.Summary("Suspend or reactivate a tenant"),
+		option.Description("Platform admin only. Suspended blocks login for every user of the tenant "+
+			"without touching membership, roles, or data — reactivating restores access exactly as it was."),
+		option.Tags("platform-admins"),
+		option.Request(new(SetTenantStatusRequest)),
+		option.Response(http.StatusOK, new(TenantSummaryResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
 
 	// Route permissions — Core enforces these at the gateway before proxying.
 	p.RequirePermission(http.MethodGet, "/branches", rbac.PermBranchRead)
@@ -409,8 +463,8 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.RequirePermission(http.MethodPatch, "/roles/:id", rbac.PermTenantManage)
 	p.RequirePermission(http.MethodDelete, "/roles/:id", rbac.PermTenantManage)
 	p.RequirePermission(http.MethodPatch, "/tenant", rbac.PermTenantManage)
-	// /branches/switch and /branches/default act on the caller's own membership —
-	// any authenticated user may; no permission required.
+	// /branches/switch acts on the caller's own membership — any authenticated
+	// user may; no permission required.
 }
 
 // requirePerm aborts with 403 unless the caller holds perm. Defense-in-depth:
@@ -591,6 +645,16 @@ func (h *handlers) me(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+func (h *handlers) listTenantPlugins(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	tenantID := c.Param("id")
+	c.JSON(http.StatusOK, ListTenantPluginsResponse{
+		Plugins: h.authSvc.InstalledPlugins(c.Request.Context(), tenantID),
+	})
+}
+
 func (h *handlers) install(c *gin.Context) {
 	var in InstallPluginRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -647,6 +711,27 @@ func (h *handlers) uninstall(c *gin.Context) {
 	c.JSON(http.StatusOK, UninstallPluginResponse{Message: msg})
 }
 
+func (h *handlers) installAll(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in InstallAllRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if in.PluginName == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "plugin_name required"})
+		return
+	}
+	results, err := h.installer.InstallAll(c.Request.Context(), in.PluginName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, InstallAllResponse{PluginName: in.PluginName, Tenants: results})
+}
+
 func (h *handlers) reconcilePlugin(c *gin.Context) {
 	if !requirePlatformAdmin(c) {
 		return
@@ -666,6 +751,36 @@ func (h *handlers) reconcilePlugin(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, ReconcilePluginResponse{PluginName: in.PluginName, Tenants: results})
+}
+
+func (h *handlers) listTenants(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	tenants, err := h.authSvc.ListTenants(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListTenantsResponse{Tenants: tenants})
+}
+
+func (h *handlers) setTenantStatus(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	tenantID := c.Param("id")
+	var in SetTenantStatusRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	t, err := h.authSvc.SetTenantStatus(c.Request.Context(), tenantID, in.Status)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TenantSummaryResponse{Tenant: *t})
 }
 
 func (h *handlers) listPlatformAdmins(c *gin.Context) {
@@ -816,24 +931,6 @@ func (h *handlers) switchBranch(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, LoginResponse{AccessToken: res.AccessToken, RefreshToken: res.RefreshToken})
-}
-
-func (h *handlers) setDefaultBranch(c *gin.Context) {
-	userID, tenantID := plugin.UserID(c), plugin.TenantID(c)
-	if userID == "" || tenantID == "" {
-		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
-		return
-	}
-	var in SetDefaultBranchRequest
-	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
-		return
-	}
-	if err := h.authSvc.SetDefaultBranch(c.Request.Context(), userID, tenantID, in.BranchID); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, MessageResponse{Message: "default branch updated"})
 }
 
 func (h *handlers) listRoles(c *gin.Context) {

@@ -120,10 +120,11 @@ type AddMemberInput struct {
 	JobTitle string
 }
 
-// AddMember grants a user access to a branch of a tenant with the given role,
-// creating the global user (and tenant PII profile) when the email is new. If
-// the user has no membership in this tenant yet, the new one becomes their
-// default landing branch.
+// AddMember grants a user access to a tenant, active in the given branch, with
+// the given role, creating the global user (and tenant PII profile) when the
+// email is new. A user has exactly one membership per tenant — if they already
+// belong to this tenant (in another branch), use SwitchBranch/role update
+// instead; AddMember rejects a duplicate.
 func (s *Service) AddMember(ctx context.Context, tenantID, branchID string, in AddMemberInput) error {
 	roleSlug := in.Role
 	if roleSlug == "" {
@@ -163,22 +164,15 @@ func (s *Service) AddMember(ctx context.Context, tenantID, branchID string, in A
 		return err
 	}
 
-	// already a member of this branch?
+	// already a member of this tenant (in any branch)?
 	exists, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(tenantID), tenantuser.BranchID(b.ID)).
+		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(tenantID)).
 		Exist(ctx)
 	if err != nil {
 		return err
 	}
 	if exists {
-		return errors.New("user is already a member of this branch")
-	}
-
-	// is this their first membership in the tenant? then it's their default.
-	hasAny, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(tenantID)).Exist(ctx)
-	if err != nil {
-		return err
+		return errors.New("user is already a member of this tenant")
 	}
 
 	if _, err := s.entClient.TenantUser.Create().
@@ -187,7 +181,6 @@ func (s *Service) AddMember(ctx context.Context, tenantID, branchID string, in A
 		SetTenantID(tenantID).
 		SetBranchID(b.ID).
 		SetRoleID(roleID).
-		SetIsDefault(!hasAny).
 		Save(ctx); err != nil {
 		return fmt.Errorf("add member: %w", err)
 	}
@@ -213,21 +206,23 @@ func (s *Service) AddMember(ctx context.Context, tenantID, branchID string, in A
 	return nil
 }
 
-// SwitchBranch issues a fresh token pair scoped to a different branch the user
-// is a member of within their current tenant. tenantID/userID come from the
+// SwitchBranch moves the user's single membership in their current tenant to a
+// different branch and issues a fresh token pair scoped to it. The role is
+// unaffected (role is tenant-level, not branch-level) — this only changes
+// which branch the user is currently active in. tenantID/userID come from the
 // caller's verified context.
 func (s *Service) SwitchBranch(ctx context.Context, userID, tenantID, branchID string) (*LoginResult, error) {
 	m, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(userID), tenantuser.TenantID(tenantID), tenantuser.BranchID(branchID)).
+		Where(tenantuser.UserID(userID), tenantuser.TenantID(tenantID)).
 		Only(ctx)
 	if err != nil {
-		return nil, errors.New("no access to that branch")
+		return nil, errors.New("no access to tenant")
 	}
 	t, err := s.entClient.Tenant.Query().Where(tenant.ID(tenantID), tenant.Status("active")).Only(ctx)
 	if err != nil {
 		return nil, errors.New("tenant not available")
 	}
-	b, err := s.entClient.Branch.Get(ctx, branchID)
+	b, err := s.entClient.Branch.Query().Where(branch.ID(branchID), branch.TenantID(tenantID)).Only(ctx)
 	if err != nil || b.Status != "active" {
 		return nil, errors.New("branch not available")
 	}
@@ -235,26 +230,10 @@ func (s *Service) SwitchBranch(ctx context.Context, userID, tenantID, branchID s
 	if err != nil {
 		return nil, errors.New("user not found")
 	}
+	if m.BranchID != branchID {
+		if _, err := s.entClient.TenantUser.UpdateOneID(m.ID).SetBranchID(branchID).Save(ctx); err != nil {
+			return nil, fmt.Errorf("switch branch: %w", err)
+		}
+	}
 	return s.issueTokens(ctx, u, t, b, m.RoleID)
-}
-
-// SetDefaultBranch marks one branch membership as the user's default landing
-// branch in a tenant, clearing the flag on their other memberships there.
-func (s *Service) SetDefaultBranch(ctx context.Context, userID, tenantID, branchID string) error {
-	target, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(userID), tenantuser.TenantID(tenantID), tenantuser.BranchID(branchID)).
-		Only(ctx)
-	if err != nil {
-		return errors.New("no access to that branch")
-	}
-	// clear existing defaults in this tenant, then set the target.
-	if _, err := s.entClient.TenantUser.Update().
-		Where(tenantuser.UserID(userID), tenantuser.TenantID(tenantID), tenantuser.IsDefault(true)).
-		SetIsDefault(false).Save(ctx); err != nil {
-		return fmt.Errorf("clear defaults: %w", err)
-	}
-	if _, err := s.entClient.TenantUser.UpdateOneID(target.ID).SetIsDefault(true).Save(ctx); err != nil {
-		return fmt.Errorf("set default: %w", err)
-	}
-	return nil
 }

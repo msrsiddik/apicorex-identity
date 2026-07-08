@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ApiCoreX — Platform Admin</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9f0;
+    --muted: #8b93a7; --accent: #5b8cff; --danger: #ef5b5b; --ok: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  html { -webkit-text-size-adjust: 100%; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+    gap: 10px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  header .who { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  header button { background: transparent; border: 1px solid var(--border); color: var(--muted);
+    padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  header button:hover { border-color: var(--accent); color: var(--text); }
+
+  #login-view { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 28px;
+    width: 100%; max-width: 340px; }
+  .card h2 { margin: 0 0 8px; font-size: 16px; }
+  .card p.welcome { margin: 0 0 18px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .field input {
+    width: 100%; padding: 9px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: #0e1219; color: var(--text); font-size: 16px;
+  }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  button.primary { width: 100%; padding: 12px; border-radius: 6px; border: none; background: var(--accent);
+    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 6px; }
+  button.primary:hover { opacity: .9; }
+  button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  .error { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 16px; }
+
+  main { padding: 16px; max-width: 1100px; margin: 0 auto; display: none; }
+  main.visible { display: block; }
+  nav.tabs {
+    display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  nav.tabs button { background: none; border: none; color: var(--muted); padding: 10px 14px;
+    cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; white-space: nowrap; flex: 0 0 auto; }
+  nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; min-width: 480px; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 10px; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .badge.active { background: rgba(62,207,142,0.15); color: var(--ok); }
+  .badge.other { background: rgba(139,147,167,0.15); color: var(--muted); }
+  .badge.suspended { background: rgba(239,91,91,0.15); color: var(--danger); }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; flex-wrap: wrap; }
+  .toolbar input, .toolbar select {
+    flex: 1 1 200px; min-width: 0; padding: 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: #0e1219; color: var(--text); font-size: 16px;
+  }
+  .toolbar button {
+    flex: 0 0 auto; padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); cursor: pointer; font-size: 13px; white-space: nowrap;
+  }
+  .toolbar button:hover { border-color: var(--accent); }
+  .toolbar button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .muted { color: var(--muted); }
+  .msg { font-size: 13px; margin: 10px 0; min-height: 16px; overflow-wrap: anywhere; }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--danger); }
+  code { background: #0e1219; padding: 1px 5px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+  .row-detail { padding: 12px; background: #0e1219; border-radius: 6px; margin-top: 6px; font-size: 12px; }
+  .row-detail .toolbar input, .row-detail .toolbar select { flex-basis: 140px; }
+
+  @media (max-width: 640px) {
+    header h1 { font-size: 13px; }
+    .col-id { display: none; }
+    table { min-width: 380px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="login-view">
+  <div class="card">
+    <h2>Welcome to ApiCoreX</h2>
+    <p class="welcome">Sign in with your platform admin account to manage tenants, plugins, and admins.</p>
+    <div class="field">
+      <label>Email</label>
+      <input id="login-email" type="email" autocomplete="username" placeholder="you@example.com">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••">
+    </div>
+    <button class="primary" id="login-btn">Sign in</button>
+    <div class="error" id="login-error"></div>
+  </div>
+</div>
+
+<header id="header" style="display:none">
+  <h1>ApiCoreX · Platform Admin</h1>
+  <div style="display:flex; align-items:center; gap:14px;">
+    <span class="who" id="who"></span>
+    <button id="logout-btn">Sign out</button>
+  </div>
+</header>
+
+<main id="main">
+  <nav class="tabs">
+    <button data-tab="tenants" class="active">Tenants</button>
+    <button data-tab="plugins">Plugins</button>
+    <button data-tab="admins">Platform Admins</button>
+    <button data-tab="roles">Roles</button>
+  </nav>
+
+  <section class="panel active" id="panel-tenants">
+    <div class="toolbar">
+      <input id="tenant-filter" placeholder="Filter by name or slug…">
+      <button id="tenants-refresh">Refresh</button>
+    </div>
+    <div class="msg" id="tenants-msg"></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th></th><th>Name</th><th>Slug</th><th>Plan</th><th>Status</th><th class="col-id">ID</th></tr></thead>
+      <tbody id="tenants-body"></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel" id="panel-plugins">
+    <div class="toolbar">
+      <button id="plugins-refresh">Refresh</button>
+    </div>
+    <div class="msg" id="plugins-msg"></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Name</th><th>Version</th><th>Status</th><th>Routes</th><th class="col-id">Plugin ID</th></tr></thead>
+      <tbody id="plugins-body"></tbody>
+    </table></div>
+
+    <div class="toolbar" style="margin-top:22px">
+      <select id="reconcile-plugin-name"><option value="">Loading plugins…</option></select>
+      <button id="install-all-btn">Install to all tenants</button>
+      <button id="reconcile-btn">Reconcile to all tenants</button>
+    </div>
+    <div class="msg muted">
+      <strong>Install to all tenants</strong> adds the plugin to every active tenant that doesn't already have it.
+      <strong>Reconcile</strong> rolls a plugin's newly-added migrations out to tenants that already have it installed.
+      New tenants get every currently-installed plugin automatically at registration.
+    </div>
+    <div class="msg" id="reconcile-msg"></div>
+    <div class="table-scroll"><table id="reconcile-results" style="display:none">
+      <thead><tr><th>Tenant</th><th>Result</th></tr></thead>
+      <tbody id="reconcile-body"></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel" id="panel-admins">
+    <div class="toolbar">
+      <input id="admin-email" placeholder="user@example.com">
+      <button id="grant-btn">Grant platform admin</button>
+    </div>
+    <div class="msg" id="admins-msg"></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Email</th><th class="col-id">User ID</th><th></th></tr></thead>
+      <tbody id="admins-body"></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel" id="panel-roles">
+    <div class="msg muted">System roles (seeded, apply to every tenant unless overridden by a tenant's own custom role).</div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Slug</th><th>Name</th><th>System</th></tr></thead>
+      <tbody id="roles-body"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // Core's gateway base URL. Same-origin by default (this page is served
+  // through Core's proxy); override by opening ?core=http://localhost:8080
+  const params = new URLSearchParams(location.search);
+  const CORE_URL = params.get("core") || localStorage.getItem("apicorex_core_url") || "";
+  if (params.get("core")) localStorage.setItem("apicorex_core_url", params.get("core"));
+
+  const TOKEN_KEY = "apicorex_admin_token";
+
+  function token() { return localStorage.getItem(TOKEN_KEY) || ""; }
+  function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    if (token()) headers["Authorization"] = "Bearer " + token();
+    const res = await fetch(CORE_URL + path, Object.assign({}, opts, { headers }));
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* no body */ }
+    if (!res.ok) {
+      const msg = (body && body.error) ? body.error : ("request failed (" + res.status + ")");
+      throw new Error(msg);
+    }
+    return body;
+  }
+
+  // Core's live plugin registry (currently-connected plugins), used to
+  // populate plugin-name dropdowns. Cached per page load — plugins don't
+  // come and go often enough to justify refetching on every render; the
+  // Plugins tab's Refresh button clears the cache to force a re-fetch.
+  let availablePluginsCache = null;
+  async function loadAvailablePlugins() {
+    if (availablePluginsCache) return availablePluginsCache;
+    const entries = await fetchPluginEntries();
+    const names = Array.from(new Set(entries.map(function (p) { return p.plugin_name; }))).sort();
+    availablePluginsCache = names;
+    return names;
+  }
+
+  async function fetchPluginEntries() {
+    try {
+      const list = await api("/plugins");
+      return list || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  const loginView = document.getElementById("login-view");
+  const header = document.getElementById("header");
+  const main = document.getElementById("main");
+  const who = document.getElementById("who");
+
+  function showApp(me) {
+    loginView.style.display = "none";
+    header.style.display = "flex";
+    main.classList.add("visible");
+    who.textContent = me.user_id + " · " + (me.roles || []).join(",");
+  }
+  function showLogin() {
+    loginView.style.display = "flex";
+    header.style.display = "none";
+    main.classList.remove("visible");
+  }
+
+  async function tryResume() {
+    if (!token()) return showLogin();
+    try {
+      const me = await api("/me");
+      if (me.user_type !== "platform_admin") {
+        clearToken();
+        document.getElementById("login-error").textContent = "This account is not a platform admin.";
+        return showLogin();
+      }
+      showApp(me);
+      loadTenants();
+      loadPlugins();
+      loadAdmins();
+      loadRoles();
+      populateReconcileDropdown();
+    } catch (e) {
+      clearToken();
+      showLogin();
+    }
+  }
+
+  document.getElementById("login-btn").addEventListener("click", async function () {
+    const email = document.getElementById("login-email").value.trim();
+    const password = document.getElementById("login-password").value;
+    const errEl = document.getElementById("login-error");
+    errEl.textContent = "";
+    if (!email || !password) { errEl.textContent = "email and password required"; return; }
+    try {
+      const res = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: email, password: password }) });
+      setToken(res.access_token);
+      await tryResume();
+    } catch (e) {
+      errEl.textContent = e.message;
+    }
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", function () {
+    clearToken();
+    showLogin();
+  });
+
+  // tabs
+  document.querySelectorAll("nav.tabs button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll("nav.tabs button").forEach(function (b) { b.classList.remove("active"); });
+      document.querySelectorAll(".panel").forEach(function (p) { p.classList.remove("active"); });
+      btn.classList.add("active");
+      document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  let allTenants = [];
+  let expandedTenantID = null;
+
+  function renderTenants(list) {
+    const body = document.getElementById("tenants-body");
+    body.innerHTML = "";
+    list.forEach(function (t) {
+      const tr = document.createElement("tr");
+      tr.className = "tenant-row";
+      tr.style.cursor = "pointer";
+      const badgeClass = t.status === "active" ? "active" : (t.status === "suspended" ? "suspended" : "other");
+      tr.innerHTML =
+        "<td class='muted'>" + (expandedTenantID === t.id ? "▾" : "▸") + "</td>" +
+        "<td>" + escapeHtml(t.name) + "</td>" +
+        "<td><code>" + escapeHtml(t.slug) + "</code></td>" +
+        "<td>" + escapeHtml(t.plan) + "</td>" +
+        "<td><span class='badge " + badgeClass + "'>" + escapeHtml(t.status) + "</span></td>" +
+        "<td class='muted col-id'><code>" + escapeHtml(t.id) + "</code></td>";
+      tr.addEventListener("click", function () {
+        expandedTenantID = (expandedTenantID === t.id) ? null : t.id;
+        renderTenants(list);
+      });
+      body.appendChild(tr);
+
+      if (expandedTenantID === t.id) {
+        const detailTr = document.createElement("tr");
+        const detailTd = document.createElement("td");
+        detailTd.colSpan = 6;
+        detailTd.innerHTML = "<div class='row-detail' id='detail-" + t.id + "'>Loading…</div>";
+        detailTr.appendChild(detailTd);
+        body.appendChild(detailTr);
+        loadTenantDetail(t);
+      }
+    });
+  }
+
+  async function loadTenantDetail(t) {
+    const el = document.getElementById("detail-" + t.id);
+    try {
+      const res = await api("/tenants/" + encodeURIComponent(t.id) + "/plugins");
+      const installed = res.plugins || [];
+      const plugins = await loadAvailablePlugins();
+      const options = plugins.length
+        ? plugins.map(function (p) {
+            return "<option value='" + escapeHtml(p) + "'>" + escapeHtml(p) +
+              (installed.includes(p) ? " (installed)" : "") + "</option>";
+          }).join("")
+        : "<option value=''>no plugins registered</option>";
+
+      const canToggleStatus = t.status === "active" || t.status === "suspended";
+      const statusHtml = canToggleStatus
+        ? "<div class='toolbar' style='margin-bottom:12px'>" +
+          "<span class='muted'>Status: <span class='badge " + (t.status === "active" ? "active" : "suspended") + "'>" + escapeHtml(t.status) + "</span></span>" +
+          (t.status === "active"
+            ? "<button class='status-toggle-btn danger'>Suspend tenant</button>"
+            : "<button class='status-toggle-btn'>Reactivate tenant</button>") +
+          "</div>"
+        : "";
+
+      el.innerHTML =
+        statusHtml +
+        "<div style='margin-bottom:8px'><strong>Installed plugins:</strong> " +
+        (installed.length ? installed.map(escapeHtml).join(", ") : "<span class='muted'>none</span>") +
+        "</div>" +
+        "<div class='toolbar' style='margin-bottom:0'>" +
+        "<select class='plugin-name-select'>" + options + "</select>" +
+        "<button class='install-btn'>Install</button>" +
+        "<button class='uninstall-btn danger'>Uninstall (keep data)</button>" +
+        "<button class='uninstall-drop-btn danger'>Uninstall (drop data)</button>" +
+        "</div>" +
+        "<div class='msg' id='detail-msg-" + t.id + "'></div>";
+
+      const select = el.querySelector(".plugin-name-select");
+      const msgEl = document.getElementById("detail-msg-" + t.id);
+
+      el.querySelector(".install-btn").addEventListener("click", function () {
+        tenantPluginAction(t, select.value, "install", false, msgEl);
+      });
+      el.querySelector(".uninstall-btn").addEventListener("click", function () {
+        tenantPluginAction(t, select.value, "uninstall", false, msgEl);
+      });
+      el.querySelector(".uninstall-drop-btn").addEventListener("click", function () {
+        if (!confirm("Permanently drop this plugin's tables for " + t.name + "?")) return;
+        tenantPluginAction(t, select.value, "uninstall", true, msgEl);
+      });
+      const toggleBtn = el.querySelector(".status-toggle-btn");
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", function () {
+          const next = t.status === "active" ? "suspended" : "active";
+          const verb = next === "suspended" ? "Suspend" : "Reactivate";
+          if (!confirm(verb + " " + t.name + "? " + (next === "suspended" ? "This blocks login for every user of this tenant." : "This restores login access.")) ) return;
+          setTenantStatus(t, next, msgEl);
+        });
+      }
+    } catch (e) {
+      el.innerHTML = "<span class='msg err'>" + escapeHtml(e.message) + "</span>";
+    }
+  }
+
+  async function tenantPluginAction(t, pluginName, action, dropData, msgEl) {
+    if (!pluginName) { msgEl.textContent = "plugin name required"; msgEl.className = "msg err"; return; }
+    try {
+      const body = { tenant_id: t.id, plugin_name: pluginName };
+      if (action === "uninstall") body.drop_data = dropData;
+      await api("/plugins/" + action, { method: "POST", body: JSON.stringify(body) });
+      msgEl.textContent = pluginName + " " + action + "ed"; msgEl.className = "msg ok";
+      loadTenantDetail(t);
+    } catch (e) {
+      msgEl.textContent = e.message; msgEl.className = "msg err";
+    }
+  }
+
+  async function setTenantStatus(t, status, msgEl) {
+    try {
+      const res = await api("/tenants/" + encodeURIComponent(t.id) + "/status", {
+        method: "PATCH", body: JSON.stringify({ status: status })
+      });
+      const idx = allTenants.findIndex(function (x) { return x.id === t.id; });
+      if (idx !== -1) allTenants[idx] = res.tenant;
+      msgEl.textContent = "tenant " + status; msgEl.className = "msg ok";
+      renderTenants(allTenants);
+    } catch (e) {
+      msgEl.textContent = e.message; msgEl.className = "msg err";
+    }
+  }
+
+  async function loadTenants() {
+    const msg = document.getElementById("tenants-msg");
+    msg.textContent = "Loading…"; msg.className = "msg";
+    try {
+      const res = await api("/tenants");
+      allTenants = res.tenants || [];
+      renderTenants(allTenants);
+      msg.textContent = allTenants.length + " tenant(s)";
+    } catch (e) {
+      msg.textContent = e.message; msg.className = "msg err";
+    }
+  }
+  document.getElementById("tenants-refresh").addEventListener("click", loadTenants);
+  document.getElementById("tenant-filter").addEventListener("input", function (e) {
+    const q = e.target.value.trim().toLowerCase();
+    renderTenants(allTenants.filter(function (t) {
+      return t.name.toLowerCase().includes(q) || t.slug.toLowerCase().includes(q);
+    }));
+  });
+
+  async function loadAdmins() {
+    const msg = document.getElementById("admins-msg");
+    try {
+      const res = await api("/platform-admins");
+      const body = document.getElementById("admins-body");
+      body.innerHTML = "";
+      (res.admins || []).forEach(function (a) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td>" + escapeHtml(a.email) + "</td>" +
+          "<td class='muted col-id'><code>" + escapeHtml(a.user_id) + "</code></td>" +
+          "<td><button class='danger revoke-btn' data-email='" + escapeHtml(a.email) + "'>Revoke</button></td>";
+        body.appendChild(tr);
+      });
+      document.querySelectorAll(".revoke-btn").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+          if (!confirm("Revoke platform admin for " + btn.dataset.email + "?")) return;
+          try {
+            await api("/platform-admins/" + encodeURIComponent(btn.dataset.email), { method: "DELETE" });
+            loadAdmins();
+          } catch (e) { alert(e.message); }
+        });
+      });
+      msg.textContent = "";
+    } catch (e) {
+      msg.textContent = e.message; msg.className = "msg err";
+    }
+  }
+
+  document.getElementById("grant-btn").addEventListener("click", async function () {
+    const email = document.getElementById("admin-email").value.trim();
+    const msg = document.getElementById("admins-msg");
+    if (!email) { msg.textContent = "email required"; msg.className = "msg err"; return; }
+    try {
+      await api("/platform-admins", { method: "POST", body: JSON.stringify({ email: email }) });
+      document.getElementById("admin-email").value = "";
+      msg.textContent = "granted"; msg.className = "msg ok";
+      loadAdmins();
+    } catch (e) {
+      msg.textContent = e.message; msg.className = "msg err";
+    }
+  });
+
+  async function loadPlugins() {
+    const msg = document.getElementById("plugins-msg");
+    const body = document.getElementById("plugins-body");
+    msg.textContent = "Loading…"; msg.className = "msg";
+    const entries = await fetchPluginEntries();
+    body.innerHTML = "";
+    entries.forEach(function (p) {
+      const tr = document.createElement("tr");
+      const badgeClass = p.status === "up" || p.status === "healthy" || p.status === "alive" ? "active" : "other";
+      const routeCount = typeof p.routes === "number" ? p.routes : (Array.isArray(p.routes) ? p.routes.length : 0);
+      tr.innerHTML =
+        "<td>" + escapeHtml(p.plugin_name) + "</td>" +
+        "<td class='muted'>" + escapeHtml(p.version) + "</td>" +
+        "<td><span class='badge " + badgeClass + "'>" + escapeHtml(p.status) + "</span></td>" +
+        "<td class='muted'>" + routeCount + "</td>" +
+        "<td class='muted col-id'><code>" + escapeHtml(p.plugin_id) + "</code></td>";
+      body.appendChild(tr);
+    });
+    msg.textContent = entries.length + " plugin(s) registered with Core";
+  }
+  document.getElementById("plugins-refresh").addEventListener("click", function () {
+    availablePluginsCache = null; // force a fresh fetch, including for dropdowns
+    loadPlugins();
+    populateReconcileDropdown();
+  });
+
+  async function populateReconcileDropdown() {
+    const select = document.getElementById("reconcile-plugin-name");
+    const plugins = await loadAvailablePlugins();
+    select.innerHTML = plugins.length
+      ? plugins.map(function (p) { return "<option value='" + escapeHtml(p) + "'>" + escapeHtml(p) + "</option>"; }).join("")
+      : "<option value=''>no plugins registered</option>";
+  }
+
+  async function runPluginBatch(path, verb, pastTense) {
+    const name = document.getElementById("reconcile-plugin-name").value.trim();
+    const msg = document.getElementById("reconcile-msg");
+    const table = document.getElementById("reconcile-results");
+    const body = document.getElementById("reconcile-body");
+    if (!name) { msg.textContent = "plugin name required"; msg.className = "msg err"; return; }
+    msg.textContent = verb + "…"; msg.className = "msg"; table.style.display = "none";
+    try {
+      const res = await api(path, { method: "POST", body: JSON.stringify({ plugin_name: name }) });
+      const results = res.tenants || [];
+      body.innerHTML = "";
+      results.forEach(function (r) {
+        const tr = document.createElement("tr");
+        const ok = !r.error;
+        tr.innerHTML =
+          "<td><code>" + escapeHtml(r.slug || r.tenant_id) + "</code></td>" +
+          "<td class='" + (ok ? "" : "msg err") + "'>" + (ok ? "<span class='badge active'>ok</span>" : escapeHtml(r.error)) + "</td>";
+        body.appendChild(tr);
+      });
+      table.style.display = results.length ? "" : "none";
+      msg.textContent = results.length + " tenant(s) " + pastTense + " for " + name;
+      msg.className = "msg ok";
+    } catch (e) {
+      msg.textContent = e.message; msg.className = "msg err";
+    }
+  }
+
+  document.getElementById("install-all-btn").addEventListener("click", function () {
+    runPluginBatch("/plugins/install-all", "Installing", "processed");
+  });
+  document.getElementById("reconcile-btn").addEventListener("click", function () {
+    runPluginBatch("/plugins/reconcile", "Reconciling", "reconciled");
+  });
+
+  async function loadRoles() {
+    try {
+      const res = await api("/roles");
+      const body = document.getElementById("roles-body");
+      body.innerHTML = "";
+      (res.roles || []).forEach(function (r) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td><code>" + escapeHtml(r.slug) + "</code></td>" +
+          "<td>" + escapeHtml(r.name) + "</td>" +
+          "<td>" + (r.is_system ? "yes" : "no") + "</td>";
+        body.appendChild(tr);
+      });
+    } catch (e) {
+      // roles is tenant-scoped; a platform admin with no tenant membership
+      // may not be able to list it — fail quietly, this tab is best-effort.
+      document.getElementById("roles-body").innerHTML =
+        "<tr><td colspan='3' class='muted'>" + escapeHtml(e.message) + "</td></tr>";
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  tryResume();
+})();
+</script>
+</body>
+</html>

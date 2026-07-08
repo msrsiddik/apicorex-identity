@@ -4378,7 +4378,6 @@ type TenantUserMutation struct {
 	id            *string
 	branch_id     *string
 	role_id       *string
-	is_default    *bool
 	created_at    *time.Time
 	clearedFields map[string]struct{}
 	user          *string
@@ -4638,42 +4637,6 @@ func (m *TenantUserMutation) ResetRoleID() {
 	m.role_id = nil
 }
 
-// SetIsDefault sets the "is_default" field.
-func (m *TenantUserMutation) SetIsDefault(b bool) {
-	m.is_default = &b
-}
-
-// IsDefault returns the value of the "is_default" field in the mutation.
-func (m *TenantUserMutation) IsDefault() (r bool, exists bool) {
-	v := m.is_default
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIsDefault returns the old "is_default" field's value of the TenantUser entity.
-// If the TenantUser object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *TenantUserMutation) OldIsDefault(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIsDefault is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIsDefault requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIsDefault: %w", err)
-	}
-	return oldValue.IsDefault, nil
-}
-
-// ResetIsDefault resets all changes to the "is_default" field.
-func (m *TenantUserMutation) ResetIsDefault() {
-	m.is_default = nil
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (m *TenantUserMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -4798,7 +4761,7 @@ func (m *TenantUserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TenantUserMutation) Fields() []string {
-	fields := make([]string, 0, 6)
+	fields := make([]string, 0, 5)
 	if m.user != nil {
 		fields = append(fields, tenantuser.FieldUserID)
 	}
@@ -4810,9 +4773,6 @@ func (m *TenantUserMutation) Fields() []string {
 	}
 	if m.role_id != nil {
 		fields = append(fields, tenantuser.FieldRoleID)
-	}
-	if m.is_default != nil {
-		fields = append(fields, tenantuser.FieldIsDefault)
 	}
 	if m.created_at != nil {
 		fields = append(fields, tenantuser.FieldCreatedAt)
@@ -4833,8 +4793,6 @@ func (m *TenantUserMutation) Field(name string) (ent.Value, bool) {
 		return m.BranchID()
 	case tenantuser.FieldRoleID:
 		return m.RoleID()
-	case tenantuser.FieldIsDefault:
-		return m.IsDefault()
 	case tenantuser.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -4854,8 +4812,6 @@ func (m *TenantUserMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldBranchID(ctx)
 	case tenantuser.FieldRoleID:
 		return m.OldRoleID(ctx)
-	case tenantuser.FieldIsDefault:
-		return m.OldIsDefault(ctx)
 	case tenantuser.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	}
@@ -4894,13 +4850,6 @@ func (m *TenantUserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRoleID(v)
-		return nil
-	case tenantuser.FieldIsDefault:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIsDefault(v)
 		return nil
 	case tenantuser.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -4969,9 +4918,6 @@ func (m *TenantUserMutation) ResetField(name string) error {
 		return nil
 	case tenantuser.FieldRoleID:
 		m.ResetRoleID()
-		return nil
-	case tenantuser.FieldIsDefault:
-		m.ResetIsDefault()
 		return nil
 	case tenantuser.FieldCreatedAt:
 		m.ResetCreatedAt()

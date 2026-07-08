@@ -46,20 +46,6 @@ func (tuc *TenantUserCreate) SetRoleID(s string) *TenantUserCreate {
 	return tuc
 }
 
-// SetIsDefault sets the "is_default" field.
-func (tuc *TenantUserCreate) SetIsDefault(b bool) *TenantUserCreate {
-	tuc.mutation.SetIsDefault(b)
-	return tuc
-}
-
-// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
-func (tuc *TenantUserCreate) SetNillableIsDefault(b *bool) *TenantUserCreate {
-	if b != nil {
-		tuc.SetIsDefault(*b)
-	}
-	return tuc
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (tuc *TenantUserCreate) SetCreatedAt(t time.Time) *TenantUserCreate {
 	tuc.mutation.SetCreatedAt(t)
@@ -125,10 +111,6 @@ func (tuc *TenantUserCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (tuc *TenantUserCreate) defaults() {
-	if _, ok := tuc.mutation.IsDefault(); !ok {
-		v := tenantuser.DefaultIsDefault
-		tuc.mutation.SetIsDefault(v)
-	}
 	if _, ok := tuc.mutation.CreatedAt(); !ok {
 		v := tenantuser.DefaultCreatedAt()
 		tuc.mutation.SetCreatedAt(v)
@@ -148,9 +130,6 @@ func (tuc *TenantUserCreate) check() error {
 	}
 	if _, ok := tuc.mutation.RoleID(); !ok {
 		return &ValidationError{Name: "role_id", err: errors.New(`ent: missing required field "TenantUser.role_id"`)}
-	}
-	if _, ok := tuc.mutation.IsDefault(); !ok {
-		return &ValidationError{Name: "is_default", err: errors.New(`ent: missing required field "TenantUser.is_default"`)}
 	}
 	if _, ok := tuc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "TenantUser.created_at"`)}
@@ -204,10 +183,6 @@ func (tuc *TenantUserCreate) createSpec() (*TenantUser, *sqlgraph.CreateSpec) {
 	if value, ok := tuc.mutation.RoleID(); ok {
 		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
 		_node.RoleID = value
-	}
-	if value, ok := tuc.mutation.IsDefault(); ok {
-		_spec.SetField(tenantuser.FieldIsDefault, field.TypeBool, value)
-		_node.IsDefault = value
 	}
 	if value, ok := tuc.mutation.CreatedAt(); ok {
 		_spec.SetField(tenantuser.FieldCreatedAt, field.TypeTime, value)

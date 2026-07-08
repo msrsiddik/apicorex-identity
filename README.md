@@ -31,7 +31,7 @@ PostgreSQL
 │   ├── users                      global credentials (email, password hash)
 │   ├── tenants                    tenant registry (slug, schema_name, status)
 │   ├── branches                   sub-orgs within a tenant (one tenant → many)
-│   ├── tenant_users               membership per (user, tenant, branch) + role_id + is_default
+│   ├── tenant_users               membership per (user, tenant): role_id + current branch_id
 │   ├── roles                      system roles (tenant_id="") + tenant custom roles
 │   ├── role_permissions           role → permission ("resource:action", wildcards)
 │   ├── refresh_tokens             (carry branch_id so refresh keeps the branch)
@@ -47,13 +47,14 @@ Atlas CLI needed. A user logging into a tenant they don't belong to is rejected;
 a user in multiple tenants gets a `409` chooser until they pass a `slug`.
 
 **Branches.** A tenant has one or more branches (a default `main` is created at
-registration). Membership is per `(user, tenant, branch)`, so a user can belong
-to several branches with a different role in each; login lands on their
-`is_default` branch and `/branches/switch` issues a token for another branch
-they belong to (no new access — see [docs/branch-isolation.md](docs/branch-isolation.md)).
-Branch-scoped data lives in the tenant schema with a `branch_id` column;
-downstream plugins filter on it via the `plugin.RequireBranch` / `BranchScope`
-helpers.
+registration). A user has exactly **one** membership per tenant — they are
+active in exactly one branch at a time, with one role for the whole tenant
+(role doesn't change with the branch). Login lands them on their current
+branch; `/branches/switch` moves that same membership to a different branch
+they're being granted access to and issues a fresh token for it (see
+[docs/branch-isolation.md](docs/branch-isolation.md)). Branch-scoped data lives
+in the tenant schema with a `branch_id` column; downstream plugins filter on it
+via the `plugin.RequireBranch` / `BranchScope` helpers.
 
 **RBAC.** A membership's `role_id` resolves to a role and its flattened
 permission set, embedded in the access token (`permissions` claim) on top of a
@@ -133,7 +134,7 @@ compose file in the [Core repo](../apicorex) instead.
 | POST | `/auth/register` | yes | — | Provision a tenant + owner (+ default `main` branch); `slug` optional (auto-generated from `name`), final slug returned |
 | GET | `/auth/slug-available` | yes | — | `?slug=` → `{valid, available, reason}` for live slug checks |
 | GET | `/auth/slug-suggest` | yes | — | `?name=` (required) → a valid, available slug derived from the name |
-| POST | `/auth/login` | yes | — | Returns access + refresh token (lands on default branch) |
+| POST | `/auth/login` | yes | — | Returns access + refresh token (lands on the user's current branch) |
 | POST | `/auth/refresh` | yes | — | Rotate tokens (re-resolves role permissions) |
 | POST | `/auth/logout` | no | — | Revoke refresh (+ access token if Redis) |
 | GET | `/me` | no | — | Current user: roles, permissions, branch, profile |
@@ -141,8 +142,7 @@ compose file in the [Core repo](../apicorex) instead.
 | POST | `/branches` | no | `branch:write` | Create a branch |
 | PATCH | `/branches/:id` | no | `branch:manage` | Rename / archive a branch |
 | POST | `/branches/:id/members` | no | `user:invite` | Add a user to a branch (creates the user if new) |
-| POST | `/branches/switch` | no | — | Issue a token for another branch you belong to |
-| POST | `/branches/default` | no | — | Set your default landing branch |
+| POST | `/branches/switch` | no | — | Move to a different branch in your tenant and issue a fresh token for it |
 | GET | `/roles` | no | `tenant:manage` | List system + custom roles |
 | POST | `/roles` | no | `tenant:manage` | Create a custom role |
 | PATCH | `/roles/:id` | no | `tenant:manage` | Update a custom role |
@@ -150,14 +150,19 @@ compose file in the [Core repo](../apicorex) instead.
 | PATCH | `/tenant` | no | `tenant:manage` | Update the tenant's display name / plan (slug is immutable) |
 | POST | `/plugins/install` | no | `plugin:install` | Install a plugin for **your own** tenant |
 | POST | `/plugins/uninstall` | no | `plugin:uninstall` | Uninstall (`drop_data` keeps or drops tables) |
+| POST | `/plugins/install-all` | no | *platform admin* | Install a plugin for every active tenant that doesn't already have it |
 | POST | `/plugins/reconcile` | no | *platform admin* | Roll a plugin's newly-added migrations out to every tenant that has it installed |
+| GET | `/tenants` | no | *platform admin* | List every tenant (id, slug, name, plan, status) |
+| GET | `/tenants/:id/plugins` | no | *platform admin* | List a tenant's installed plugins (any tenant, not just your own) |
+| PATCH | `/tenants/:id/status` | no | *platform admin* | Suspend or reactivate a tenant (`{"status":"suspended"\|"active"}`) — blocks/restores login for every user of the tenant without touching data |
 | GET | `/platform-admins` | no | *platform admin* | List platform admins |
 | POST | `/platform-admins` | no | *platform admin* | Grant an existing user platform admin |
 | DELETE | `/platform-admins/:email` | no | *platform admin* | Revoke a user's platform admin |
+| GET | `/admin` | yes | — | Platform-admin web UI (see below) |
 
 > The **Permission** column is what Core's gateway requires before proxying
 > (handlers re-check it too). `—` means any authenticated user — `/branches/switch`
-> and `/branches/default` act only on the caller's own membership.
+> acts only on the caller's own membership.
 >
 > Install/uninstall additionally require the body's `tenant_id` to match the
 > caller's JWT tenant — you cannot manage another tenant's plugins (`403`
@@ -183,6 +188,17 @@ compose file in the [Core repo](../apicorex) instead.
 > member first (both admin-create a global user), then grant platform admin.
 > This is intentional: account creation and privilege escalation stay separate
 > steps, so granting platform admin can never be used to spray new credentials.
+>
+> **`/admin` is a self-contained HTML page** (login form + tenant list + plugin
+> admins), served by this plugin but with no session or auth logic of its own —
+> it authenticates via the ordinary `/auth/login` and stores the access token in
+> `localStorage`, then calls the JSON API through Core's gateway exactly like
+> any other client. Open it through Core (e.g. `http://localhost:8080/admin`)
+> so the browser's requests go through the same JWT verification as everything
+> else. Like every plugin route, this only works because the plugin trusts
+> Core's `X-ApiCoreX-*` headers unconditionally — the plugin's own port should
+> not be reachable from outside the deployment; Core is the only intended
+> entry point.
 
 ---
 

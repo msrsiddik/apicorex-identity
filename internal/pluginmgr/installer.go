@@ -134,6 +134,42 @@ type ReconcileResult struct {
 	Error    string `json:"error,omitempty"` // empty on success
 }
 
+// InstallAll installs a plugin for every active tenant that doesn't already
+// have it (provisioning/suspended tenants are skipped — provisioning isn't
+// finished setting up its schema yet, and suspended tenants shouldn't gain new
+// access while suspended). Tenants that already have it installed are
+// reported as a no-op success, not an error, so this is safe to call
+// repeatedly (e.g. after installing for a handful of tenants manually).
+func (ins *Installer) InstallAll(ctx context.Context, pluginName string) ([]ReconcileResult, error) {
+	tenants, err := ins.entClient.Tenant.Query().Where(entTenant.Status("active")).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list tenants: %w", err)
+	}
+
+	results := make([]ReconcileResult, 0, len(tenants))
+	for _, t := range tenants {
+		res := ReconcileResult{TenantID: t.ID, Slug: t.Slug}
+		exists, err := ins.entClient.PluginInstall.Query().
+			Where(plugininstall.TenantID(t.ID), plugininstall.PluginName(pluginName)).
+			Exist(ctx)
+		if err != nil {
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+		if exists {
+			results = append(results, res) // already installed — no-op success
+			continue
+		}
+		if err := ins.Install(ctx, InstallInput{TenantID: t.ID, PluginName: pluginName}); err != nil {
+			res.Error = err.Error()
+			log.Printf("[pluginmgr] bulk install %q failed for tenant %s: %v", pluginName, t.ID, err)
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
 // ReconcileAll applies a plugin's currently-pending migrations to every tenant
 // that already has it installed. Each plugin migration is versioned and tracked
 // per tenant (plugin_migration_histories), so this is idempotent — a tenant

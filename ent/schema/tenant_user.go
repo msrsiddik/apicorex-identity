@@ -11,13 +11,13 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// TenantUser is the membership linking a global User to a Tenant *branch*,
-// carrying the user's role for that branch. One row per (user, tenant, branch):
-// a user in two branches of the same tenant has two rows, possibly with
-// different roles. Exactly one row per (user, tenant) is the default branch
-// (is_default), which login lands on. An explicit join entity (not ent's bare
-// M2M) so it can hold role/branch payload and be queried directly in login/saga.
-// Lives in the shared (public) schema.
+// TenantUser is the membership linking a global User to a Tenant, carrying the
+// user's role for that tenant (role is tenant-level, not branch-level). Exactly
+// one row per (user, tenant): a user is only ever active in one branch of a
+// tenant at a time. branch_id is that current branch — switching branches
+// updates this row in place rather than creating a second membership. An
+// explicit join entity (not ent's bare M2M) so it can hold role/branch payload
+// and be queried directly in login/saga. Lives in the shared (public) schema.
 type TenantUser struct {
 	ent.Schema
 }
@@ -33,9 +33,8 @@ func (TenantUser) Fields() []ent.Field {
 		field.String("id").Unique().Immutable(), // "tu_<uuid8>"
 		field.String("user_id"),
 		field.String("tenant_id"),
-		field.String("branch_id"),               // the branch this membership is scoped to
-		field.String("role_id"),                  // -> roles.id (system or tenant role)
-		field.Bool("is_default").Default(false),  // login lands the user on this branch
+		field.String("branch_id"),          // the branch this user is currently active in
+		field.String("role_id"),            // -> roles.id (system or tenant role); tenant-level, unaffected by branch switch
 		field.Time("created_at").Default(time.Now).Immutable(),
 	}
 }
@@ -49,8 +48,7 @@ func (TenantUser) Edges() []ent.Edge {
 
 func (TenantUser) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("user_id", "tenant_id", "branch_id").Unique(), // one membership per (user, tenant, branch)
-		index.Fields("user_id", "tenant_id"),                       // membership lookup / chooser
+		index.Fields("user_id", "tenant_id").Unique(), // one membership per (user, tenant) — single active branch
 		index.Fields("tenant_id"),
 	}
 }
