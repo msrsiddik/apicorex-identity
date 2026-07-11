@@ -3,34 +3,34 @@ package auth_test
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
 	"github.com/msrsiddik/apicorex-identity/internal/testutil"
 )
 
-// decodeClaims parses an access token with the test secret and returns its claims.
-func decodeClaims(t *testing.T, token string) *auth.Claims {
+// introspect resolves a raw device token as Core would (acting user = the
+// token's owner) and returns the request identity.
+func introspect(t *testing.T, svc *auth.Service, raw string) *auth.IntrospectResult {
 	t.Helper()
-	var claims auth.Claims
-	_, err := jwt.ParseWithClaims(token, &claims, func(*jwt.Token) (any, error) {
-		return []byte("test-secret"), nil
-	})
+	res, err := svc.Introspect(context.Background(), auth.HashToken(raw), "")
 	if err != nil {
-		t.Fatalf("parse token: %v", err)
+		t.Fatalf("introspect: %v", err)
 	}
-	return &claims
+	return res
+}
+
+// newService builds the auth service under test.
+func newService(pg *testutil.PG) *auth.Service {
+	return auth.NewService(pg.EntClient, pg.DB, pg.RBAC)
 }
 
 // Registration creates a default "main" branch; login lands the owner on it and
-// the access token carries the branch claim.
+// introspection reflects the branch scope.
 func TestLogin_LandsOnDefaultBranch(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	res, err := svc.Login(context.Background(), auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "secret123",
@@ -38,32 +38,32 @@ func TestLogin_LandsOnDefaultBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	claims := decodeClaims(t, res.AccessToken)
-	if claims.BranchSlug != "main" {
-		t.Errorf("expected branch_slug=main, got %q", claims.BranchSlug)
+	id := introspect(t, svc, res.Token)
+	if id.BranchSlug != "main" {
+		t.Errorf("expected branch_slug=main, got %q", id.BranchSlug)
 	}
-	if claims.BranchID == "" {
-		t.Error("expected a branch_id claim")
+	if id.BranchID == "" {
+		t.Error("expected a branch_id")
 	}
 }
 
 // Listing branches returns the default branch; creating a second branch, adding
-// the owner to it, and switching scopes a new token to that branch.
+// the owner to it, and switching re-scopes the SAME device token to that branch.
 func TestBranch_CreateSwitch(t *testing.T) {
 	ctx := context.Background()
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	// owner's user id + tenant id via an initial login
 	res, err := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	main := decodeClaims(t, res.AccessToken)
-	tenantID, userID := main.TenantID, main.Subject
+	main := introspect(t, svc, res.Token)
+	tenantID, userID := main.TenantID, main.UserID
+	tokenHash := auth.HashToken(res.Token)
 
 	// only the default branch so far
 	branches, err := svc.ListBranches(ctx, tenantID)
@@ -81,19 +81,23 @@ func TestBranch_CreateSwitch(t *testing.T) {
 	}
 
 	// owner is not a member of the new branch yet → switch must fail
-	if _, err := svc.SwitchBranch(ctx, userID, tenantID, b.ID); err == nil {
+	if _, err := svc.SwitchBranch(ctx, userID, tenantID, b.ID, tokenHash); err == nil {
 		t.Fatal("switch to a branch without membership should fail")
 	}
 
-	// add the owner to it, then switch succeeds and the token reflects the branch
+	// add the owner to it, then switch succeeds and the SAME token now
+	// introspects to the new branch
 	if err := svc.AddMember(ctx, tenantID, b.ID, auth.AddMemberInput{Email: "owner@acme.com", Role: "admin"}); err != nil {
 		t.Fatalf("add member: %v", err)
 	}
-	sw, err := svc.SwitchBranch(ctx, userID, tenantID, b.ID)
+	sw, err := svc.SwitchBranch(ctx, userID, tenantID, b.ID, tokenHash)
 	if err != nil {
 		t.Fatalf("switch: %v", err)
 	}
-	got := decodeClaims(t, sw.AccessToken)
+	if sw.Slug != "dhaka" {
+		t.Errorf("switch should return the new branch, got %+v", sw)
+	}
+	got := introspect(t, svc, res.Token)
 	if got.BranchSlug != "dhaka" {
 		t.Errorf("expected branch_slug=dhaka after switch, got %q", got.BranchSlug)
 	}
@@ -109,11 +113,10 @@ func TestBranch_AddMemberCreatesUser(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
 	mainID := branches[0].ID
 
@@ -132,9 +135,9 @@ func TestBranch_AddMemberCreatesUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new member login: %v", err)
 	}
-	claims := decodeClaims(t, login.AccessToken)
-	if claims.BranchSlug != "main" || claims.Roles[0] != "member" {
-		t.Errorf("expected main/member, got %s/%v", claims.BranchSlug, claims.Roles)
+	id := introspect(t, svc, login.Token)
+	if id.BranchSlug != "main" || id.Roles[0] != "member" {
+		t.Errorf("expected main/member, got %s/%v", id.BranchSlug, id.Roles)
 	}
 }
 
@@ -146,14 +149,15 @@ func TestBranch_SwitchCrossTenantRejected(t *testing.T) {
 	registerTenant(t, pg, "alpha", "owner@alpha.com")
 	registerTenant(t, pg, "beta", "owner@beta.com")
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 
-	a := decodeClaims(t, mustLogin(t, svc, "alpha", "owner@alpha.com").AccessToken)
-	betaTenant := decodeClaims(t, mustLogin(t, svc, "beta", "owner@beta.com").AccessToken).TenantID
+	alphaLogin := mustLogin(t, svc, "alpha", "owner@alpha.com")
+	a := introspect(t, svc, alphaLogin.Token)
+	betaTenant := introspect(t, svc, mustLogin(t, svc, "beta", "owner@beta.com").Token).TenantID
 	betaBranches, _ := svc.ListBranches(ctx, betaTenant)
 
 	// alpha's owner tries to switch into beta's branch, scoped to alpha's tenant
-	if _, err := svc.SwitchBranch(ctx, a.Subject, a.TenantID, betaBranches[0].ID); err == nil {
+	if _, err := svc.SwitchBranch(ctx, a.UserID, a.TenantID, betaBranches[0].ID, auth.HashToken(alphaLogin.Token)); err == nil {
 		t.Error("switching to another tenant's branch should fail")
 	}
 }
@@ -164,11 +168,10 @@ func TestBranch_DuplicateSlugRejected(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 
 	if _, err := svc.CreateBranch(ctx, tenantID, "main", "Another Main"); err == nil {
 		t.Fatal("creating a branch with an existing slug should fail")

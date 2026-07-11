@@ -3,7 +3,6 @@ package auth_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	enttenant "github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
@@ -16,9 +15,9 @@ func TestUpdateTenant(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 
 	info, err := svc.UpdateTenant(ctx, tenantID, "Acme Corporation", "pro")
 	if err != nil {

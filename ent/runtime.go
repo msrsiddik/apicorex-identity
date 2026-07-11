@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/msrsiddik/apicorex-identity/ent/branch"
+	"github.com/msrsiddik/apicorex-identity/ent/devicetoken"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
 	"github.com/msrsiddik/apicorex-identity/ent/pluginmigrationhistory"
-	"github.com/msrsiddik/apicorex-identity/ent/refreshtoken"
 	"github.com/msrsiddik/apicorex-identity/ent/role"
 	"github.com/msrsiddik/apicorex-identity/ent/schema"
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
@@ -31,6 +31,28 @@ func init() {
 	branchDescCreatedAt := branchFields[5].Descriptor()
 	// branch.DefaultCreatedAt holds the default value on creation for the created_at field.
 	branch.DefaultCreatedAt = branchDescCreatedAt.Default.(func() time.Time)
+	devicetokenFields := schema.DeviceToken{}.Fields()
+	_ = devicetokenFields
+	// devicetokenDescTokenHash is the schema descriptor for token_hash field.
+	devicetokenDescTokenHash := devicetokenFields[1].Descriptor()
+	// devicetoken.TokenHashValidator is a validator for the "token_hash" field. It is called by the builders before save.
+	devicetoken.TokenHashValidator = devicetokenDescTokenHash.Validators[0].(func(string) error)
+	// devicetokenDescUserID is the schema descriptor for user_id field.
+	devicetokenDescUserID := devicetokenFields[2].Descriptor()
+	// devicetoken.UserIDValidator is a validator for the "user_id" field. It is called by the builders before save.
+	devicetoken.UserIDValidator = devicetokenDescUserID.Validators[0].(func(string) error)
+	// devicetokenDescTenantID is the schema descriptor for tenant_id field.
+	devicetokenDescTenantID := devicetokenFields[3].Descriptor()
+	// devicetoken.TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
+	devicetoken.TenantIDValidator = devicetokenDescTenantID.Validators[0].(func(string) error)
+	// devicetokenDescDeviceName is the schema descriptor for device_name field.
+	devicetokenDescDeviceName := devicetokenFields[5].Descriptor()
+	// devicetoken.DefaultDeviceName holds the default value on creation for the device_name field.
+	devicetoken.DefaultDeviceName = devicetokenDescDeviceName.Default.(string)
+	// devicetokenDescCreatedAt is the schema descriptor for created_at field.
+	devicetokenDescCreatedAt := devicetokenFields[6].Descriptor()
+	// devicetoken.DefaultCreatedAt holds the default value on creation for the created_at field.
+	devicetoken.DefaultCreatedAt = devicetokenDescCreatedAt.Default.(func() time.Time)
 	plugininstallFields := schema.PluginInstall{}.Fields()
 	_ = plugininstallFields
 	// plugininstallDescInstalledAt is the schema descriptor for installed_at field.
@@ -47,24 +69,6 @@ func init() {
 	pluginmigrationhistoryDescAppliedAt := pluginmigrationhistoryFields[6].Descriptor()
 	// pluginmigrationhistory.DefaultAppliedAt holds the default value on creation for the applied_at field.
 	pluginmigrationhistory.DefaultAppliedAt = pluginmigrationhistoryDescAppliedAt.Default.(func() time.Time)
-	refreshtokenFields := schema.RefreshToken{}.Fields()
-	_ = refreshtokenFields
-	// refreshtokenDescUserID is the schema descriptor for user_id field.
-	refreshtokenDescUserID := refreshtokenFields[1].Descriptor()
-	// refreshtoken.UserIDValidator is a validator for the "user_id" field. It is called by the builders before save.
-	refreshtoken.UserIDValidator = refreshtokenDescUserID.Validators[0].(func(string) error)
-	// refreshtokenDescTenantID is the schema descriptor for tenant_id field.
-	refreshtokenDescTenantID := refreshtokenFields[2].Descriptor()
-	// refreshtoken.TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
-	refreshtoken.TenantIDValidator = refreshtokenDescTenantID.Validators[0].(func(string) error)
-	// refreshtokenDescRevoked is the schema descriptor for revoked field.
-	refreshtokenDescRevoked := refreshtokenFields[5].Descriptor()
-	// refreshtoken.DefaultRevoked holds the default value on creation for the revoked field.
-	refreshtoken.DefaultRevoked = refreshtokenDescRevoked.Default.(bool)
-	// refreshtokenDescCreatedAt is the schema descriptor for created_at field.
-	refreshtokenDescCreatedAt := refreshtokenFields[6].Descriptor()
-	// refreshtoken.DefaultCreatedAt holds the default value on creation for the created_at field.
-	refreshtoken.DefaultCreatedAt = refreshtokenDescCreatedAt.Default.(func() time.Time)
 	roleFields := schema.Role{}.Fields()
 	_ = roleFields
 	// roleDescIsSystem is the schema descriptor for is_system field.
@@ -87,8 +91,12 @@ func init() {
 	tenant.DefaultStatus = tenantDescStatus.Default.(string)
 	tenantuserFields := schema.TenantUser{}.Fields()
 	_ = tenantuserFields
+	// tenantuserDescStatus is the schema descriptor for status field.
+	tenantuserDescStatus := tenantuserFields[5].Descriptor()
+	// tenantuser.DefaultStatus holds the default value on creation for the status field.
+	tenantuser.DefaultStatus = tenantuserDescStatus.Default.(string)
 	// tenantuserDescCreatedAt is the schema descriptor for created_at field.
-	tenantuserDescCreatedAt := tenantuserFields[5].Descriptor()
+	tenantuserDescCreatedAt := tenantuserFields[6].Descriptor()
 	// tenantuser.DefaultCreatedAt holds the default value on creation for the created_at field.
 	tenantuser.DefaultCreatedAt = tenantuserDescCreatedAt.Default.(func() time.Time)
 	userFields := schema.User{}.Fields()

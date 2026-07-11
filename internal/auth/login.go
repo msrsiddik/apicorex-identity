@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/msrsiddik/apicorex-identity/ent"
+	"github.com/msrsiddik/apicorex-identity/ent/devicetoken"
 	"github.com/msrsiddik/apicorex-identity/ent/plugininstall"
-	"github.com/msrsiddik/apicorex-identity/ent/refreshtoken"
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/ent/tenantuser"
 	entuser "github.com/msrsiddik/apicorex-identity/ent/user"
@@ -18,8 +18,6 @@ import (
 	"github.com/msrsiddik/apicorex-identity/internal/tenantclient"
 	"golang.org/x/crypto/bcrypt"
 )
-
-const refreshTokenTTL = 7 * 24 * time.Hour
 
 // ErrMultipleTenants is returned by Login when the credentials are valid but the
 // user belongs to more than one tenant and no slug was supplied. The handler
@@ -48,26 +46,23 @@ type LoginInput struct {
 	Password string
 }
 
-// LoginResult is a freshly issued token pair.
+// LoginResult carries the freshly issued opaque device token. The raw token is
+// returned to the client exactly once — only its hash is stored.
 type LoginResult struct {
-	AccessToken  string
-	RefreshToken string
+	Token string
 }
 
-// Service implements the authentication flows: login, token refresh (with
-// rotation), and logout.
+// Service implements the authentication flows: login (device-token issue),
+// per-request introspection, and logout (device-token revoke).
 type Service struct {
 	entClient *ent.Client
 	db        *sql.DB
-	issuer    *Issuer
-	denylist  *Denylist // optional (nil if REDIS_URL unset)
 	rbac      *rbac.Store
 }
 
-// NewService builds the auth Service. denylist may be nil to disable access-token
-// revocation on logout.
-func NewService(entClient *ent.Client, db *sql.DB, issuer *Issuer, denylist *Denylist, rbacStore *rbac.Store) *Service {
-	return &Service{entClient: entClient, db: db, issuer: issuer, denylist: denylist, rbac: rbacStore}
+// NewService builds the auth Service.
+func NewService(entClient *ent.Client, db *sql.DB, rbacStore *rbac.Store) *Service {
+	return &Service{entClient: entClient, db: db, rbac: rbacStore}
 }
 
 // Login verifies the global credential (shared.users), resolves which tenant the
@@ -84,9 +79,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		return nil, errors.New("invalid credentials")
 	}
 
-	// 2. memberships (exactly one row per tenant — the user's single active branch there)
+	// 2. memberships (exactly one row per tenant — the user's single active branch
+	// there). Suspended memberships are excluded up front: a suspended user can't
+	// sign in, and their tenant must not appear in the multi-tenant chooser.
 	memberships, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID)).
+		Where(tenantuser.UserID(u.ID), tenantuser.StatusNEQ("suspended")).
 		Order(ent.Asc(tenantuser.FieldCreatedAt)).
 		All(ctx)
 	if err != nil {
@@ -123,45 +120,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	if m == nil {
 		return nil, errors.New("no access to tenant")
 	}
-	var b *ent.Branch
-	if m.BranchID != "" {
-		if b, err = s.entClient.Branch.Get(ctx, m.BranchID); err != nil {
-			return nil, errors.New("branch not available")
-		}
-	}
-
-	return s.issueTokens(ctx, u, t, b, m.RoleID)
-}
-
-// Refresh exchanges a valid refresh token for a new token pair, rotating the
-// refresh token (the old one is revoked). The membership role is re-loaded so
-// the new access token reflects current access.
-func (s *Service) Refresh(ctx context.Context, tokenID string) (*LoginResult, error) {
-	rt, err := s.entClient.RefreshToken.Query().
-		Where(refreshtoken.ID(tokenID), refreshtoken.Revoked(false)).
-		Only(ctx)
-	if err != nil || rt.ExpiresAt.Before(time.Now()) {
-		return nil, errors.New("invalid or expired refresh token")
-	}
-
-	t, err := s.entClient.Tenant.Get(ctx, rt.TenantID)
-	if err != nil {
-		return nil, errors.New("tenant not found")
-	}
-	u, err := s.entClient.User.Get(ctx, rt.UserID)
-	if err != nil {
-		return nil, errors.New("user not found")
-	}
-
-	// re-load the membership: role and current branch are re-read fresh (not
-	// trusted from the old token), since the user may have switched branches or
-	// had their role changed since this refresh token was issued.
-	m, err := s.entClient.TenantUser.Query().
-		Where(tenantuser.UserID(u.ID), tenantuser.TenantID(t.ID)).Only(ctx)
-	if err != nil {
+	// A suspended membership can't sign in until an owner reactivates it. Same
+	// message as no-access so a suspended user learns nothing extra.
+	if m.Status == "suspended" {
 		return nil, errors.New("no access to tenant")
 	}
-
 	var b *ent.Branch
 	if m.BranchID != "" {
 		if b, err = s.entClient.Branch.Get(ctx, m.BranchID); err != nil {
@@ -169,62 +132,30 @@ func (s *Service) Refresh(ctx context.Context, tokenID string) (*LoginResult, er
 		}
 	}
 
-	res, err := s.issueTokens(ctx, u, t, b, m.RoleID)
-	if err != nil {
-		return nil, err
-	}
-	// rotate: revoke the old refresh token
-	s.entClient.RefreshToken.UpdateOneID(rt.ID).SetRevoked(true).Exec(ctx) //nolint:errcheck
-	return res, nil
+	return s.issueDeviceToken(ctx, u, t, b)
 }
 
-// issueTokens mints an access token (scoped to tenant t / branch b with the
-// membership's role) plus a refresh token carrying the same branch. b may be nil
-// for a tenant-only token. roleID resolves to the role slug (Roles claim) and
-// its flattened permission set (Permissions claim).
-func (s *Service) issueTokens(ctx context.Context, u *ent.User, t *ent.Tenant, b *ent.Branch, roleID string) (*LoginResult, error) {
-	userType := "tenant_user"
-	if u.IsPlatformAdmin {
-		userType = "platform_admin"
-	}
-
-	roles, permissions, err := s.resolveRole(ctx, roleID)
+// issueDeviceToken mints a new opaque device token scoped to tenant t / branch b
+// (b may be nil for a tenant-only token) and owned by u — whoever typed their
+// email+password on the device. No role or permission is baked in: every request
+// resolves the acting user's access fresh via Introspect.
+func (s *Service) issueDeviceToken(ctx context.Context, u *ent.User, t *ent.Tenant, b *ent.Branch) (*LoginResult, error) {
+	raw, err := GenerateDeviceToken()
 	if err != nil {
 		return nil, err
 	}
-
-	claims := Claims{
-		RegisteredClaims: jwtRegisteredClaims(u.ID),
-		TenantID:         t.ID,
-		TenantSlug:       t.Slug,
-		SchemaName:       t.SchemaName,
-		UserType:         userType,
-		Roles:            roles,
-		Permissions:      permissions,
-	}
-	branchID := ""
-	if b != nil {
-		claims.BranchID = b.ID
-		claims.BranchSlug = b.Slug
-		branchID = b.ID
-	}
-
-	accessToken, err := s.issuer.Issue(claims)
-	if err != nil {
-		return nil, fmt.Errorf("issue access token: %w", err)
-	}
-
-	rt, err := s.entClient.RefreshToken.Create().
+	create := s.entClient.DeviceToken.Create().
 		SetID(uuid.New().String()).
+		SetTokenHash(HashToken(raw)).
 		SetUserID(u.ID).
-		SetTenantID(t.ID).
-		SetBranchID(branchID).
-		SetExpiresAt(time.Now().Add(refreshTokenTTL)).
-		Save(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("create refresh token: %w", err)
+		SetTenantID(t.ID)
+	if b != nil {
+		create = create.SetBranchID(b.ID)
 	}
-	return &LoginResult{AccessToken: accessToken, RefreshToken: rt.ID}, nil
+	if _, err := create.Save(ctx); err != nil {
+		return nil, fmt.Errorf("create device token: %w", err)
+	}
+	return &LoginResult{Token: raw}, nil
 }
 
 // resolveRole turns a role_id into the role slug (Roles claim) and its flattened
@@ -332,17 +263,16 @@ func (s *Service) InstalledPlugins(ctx context.Context, tenantID string) []strin
 	return plugins
 }
 
-// Logout revokes the refresh token and, if a denylist is configured, revokes the
-// access token by its jti until it would have expired.
-func (s *Service) Logout(ctx context.Context, refreshTokenID, accessJTI string, accessExp time.Time) error {
-	if refreshTokenID != "" {
-		s.entClient.RefreshToken.UpdateOneID(refreshTokenID).SetRevoked(true).Exec(ctx) //nolint:errcheck
+// Logout revokes the device token identified by its hash (Core injects the
+// trusted X-ApiCoreX-Token-Hash header from the verified bearer). Idempotent:
+// revoking an already-revoked or unknown token is a no-op.
+func (s *Service) Logout(ctx context.Context, tokenHash string) error {
+	if tokenHash == "" {
+		return nil
 	}
-	if s.denylist != nil && accessJTI != "" {
-		ttl := time.Until(accessExp)
-		if err := s.denylist.Revoke(ctx, accessJTI, ttl); err != nil {
-			return fmt.Errorf("denylist revoke: %w", err)
-		}
-	}
-	return nil
+	_, err := s.entClient.DeviceToken.Update().
+		Where(devicetoken.TokenHash(tokenHash), devicetoken.RevokedAtIsNil()).
+		SetRevokedAt(time.Now()).
+		Save(ctx)
+	return err
 }

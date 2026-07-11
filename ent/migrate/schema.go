@@ -43,6 +43,31 @@ var (
 			},
 		},
 	}
+	// DeviceTokensColumns holds the columns for the "device_tokens" table.
+	DeviceTokensColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "token_hash", Type: field.TypeString, Unique: true},
+		{Name: "user_id", Type: field.TypeString},
+		{Name: "tenant_id", Type: field.TypeString},
+		{Name: "branch_id", Type: field.TypeString, Nullable: true},
+		{Name: "device_name", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "last_used_at", Type: field.TypeTime, Nullable: true},
+		{Name: "revoked_at", Type: field.TypeTime, Nullable: true},
+	}
+	// DeviceTokensTable holds the schema information for the "device_tokens" table.
+	DeviceTokensTable = &schema.Table{
+		Name:       "device_tokens",
+		Columns:    DeviceTokensColumns,
+		PrimaryKey: []*schema.Column{DeviceTokensColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "devicetoken_user_id_tenant_id",
+				Unique:  false,
+				Columns: []*schema.Column{DeviceTokensColumns[2], DeviceTokensColumns[3]},
+			},
+		},
+	}
 	// PluginInstallsColumns holds the columns for the "plugin_installs" table.
 	PluginInstallsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -80,22 +105,6 @@ var (
 		Name:       "plugin_migration_histories",
 		Columns:    PluginMigrationHistoriesColumns,
 		PrimaryKey: []*schema.Column{PluginMigrationHistoriesColumns[0]},
-	}
-	// RefreshTokensColumns holds the columns for the "refresh_tokens" table.
-	RefreshTokensColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "user_id", Type: field.TypeString},
-		{Name: "tenant_id", Type: field.TypeString},
-		{Name: "branch_id", Type: field.TypeString, Nullable: true},
-		{Name: "expires_at", Type: field.TypeTime},
-		{Name: "revoked", Type: field.TypeBool, Default: false},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// RefreshTokensTable holds the schema information for the "refresh_tokens" table.
-	RefreshTokensTable = &schema.Table{
-		Name:       "refresh_tokens",
-		Columns:    RefreshTokensColumns,
-		PrimaryKey: []*schema.Column{RefreshTokensColumns[0]},
 	}
 	// RolesColumns holds the columns for the "roles" table.
 	RolesColumns = []*schema.Column{
@@ -166,6 +175,7 @@ var (
 		{Name: "id", Type: field.TypeString, Unique: true},
 		{Name: "branch_id", Type: field.TypeString},
 		{Name: "role_id", Type: field.TypeString},
+		{Name: "status", Type: field.TypeString, Default: "active"},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "tenant_id", Type: field.TypeString},
 		{Name: "user_id", Type: field.TypeString},
@@ -178,13 +188,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "tenant_users_tenants_tenant_users",
-				Columns:    []*schema.Column{TenantUsersColumns[4]},
+				Columns:    []*schema.Column{TenantUsersColumns[5]},
 				RefColumns: []*schema.Column{TenantsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "tenant_users_users_tenant_users",
-				Columns:    []*schema.Column{TenantUsersColumns[5]},
+				Columns:    []*schema.Column{TenantUsersColumns[6]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -193,12 +203,12 @@ var (
 			{
 				Name:    "tenantuser_user_id_tenant_id",
 				Unique:  true,
-				Columns: []*schema.Column{TenantUsersColumns[5], TenantUsersColumns[4]},
+				Columns: []*schema.Column{TenantUsersColumns[6], TenantUsersColumns[5]},
 			},
 			{
 				Name:    "tenantuser_tenant_id",
 				Unique:  false,
-				Columns: []*schema.Column{TenantUsersColumns[4]},
+				Columns: []*schema.Column{TenantUsersColumns[5]},
 			},
 		},
 	}
@@ -235,9 +245,9 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		BranchesTable,
+		DeviceTokensTable,
 		PluginInstallsTable,
 		PluginMigrationHistoriesTable,
-		RefreshTokensTable,
 		RolesTable,
 		RolePermissionsTable,
 		TenantsTable,

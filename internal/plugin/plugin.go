@@ -22,7 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Tenant context headers Core injects after verifying the JWT.
+// Tenant context headers Core injects after resolving the device token.
 const (
 	HeaderTenantID   = "X-ApiCoreX-Tenant-ID"
 	HeaderTenantSlug = "X-ApiCoreX-Tenant-Slug"
@@ -33,10 +33,15 @@ const (
 	HeaderUserType    = "X-ApiCoreX-User-Type"
 	HeaderRoles       = "X-ApiCoreX-Roles"
 	HeaderPermissions = "X-ApiCoreX-Permissions"
+	// HeaderTokenHash is the sha256 of the bearer device token, injected by Core
+	// so logout/branch-switch can act on the exact token row without ever seeing
+	// the raw token.
+	HeaderTokenHash = "X-ApiCoreX-Token-Hash"
 )
 
 // These helpers read the trusted tenant context Core injected as X-ApiCoreX-*
-// headers after verifying the JWT. Handlers call them instead of parsing tokens.
+// headers after resolving the device token and acting user. Handlers call them
+// instead of parsing tokens.
 func TenantID(c *gin.Context) string   { return c.GetHeader(HeaderTenantID) }
 func TenantSlug(c *gin.Context) string { return c.GetHeader(HeaderTenantSlug) }
 func SchemaName(c *gin.Context) string { return c.GetHeader(HeaderSchema) }
@@ -44,6 +49,7 @@ func BranchID(c *gin.Context) string   { return c.GetHeader(HeaderBranchID) }
 func BranchSlug(c *gin.Context) string { return c.GetHeader(HeaderBranchSlug) }
 func UserID(c *gin.Context) string     { return c.GetHeader(HeaderUserID) }
 func UserType(c *gin.Context) string   { return c.GetHeader(HeaderUserType) }
+func TokenHash(c *gin.Context) string  { return c.GetHeader(HeaderTokenHash) }
 func Roles(c *gin.Context) []string {
 	v := c.GetHeader(HeaderRoles)
 	if v == "" {
@@ -158,6 +164,15 @@ func (p *Plugin) RequirePermission(method, path, perm string) {
 // Migration declares a tenant-scoped DB migration.
 func (p *Plugin) Migration(version, name, upSQL, downSQL string) {
 	p.migrations = append(p.migrations, Migration{Version: version, Name: name, UpSQL: upSQL, DownSQL: downSQL})
+}
+
+// Internal registers a handler directly on the Gin engine WITHOUT adding it to
+// the manifest, docs, or route metadata — Core never learns of it and never
+// proxies it publicly. Used for plugin-to-plugin endpoints (e.g. Core calling
+// /internal/introspect) that authenticate with the shared plugin key instead of
+// a user token.
+func (p *Plugin) Internal(method, path string, h gin.HandlerFunc) {
+	p.engine.Handle(method, path, h)
 }
 
 // Handle registers a Gin handler and records route metadata + OpenAPI docs.

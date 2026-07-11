@@ -8,9 +8,9 @@ import "context"
 // that can be passed at runtime.
 type SchemaConfig struct {
 	Branch                 string // Branch table.
+	DeviceToken            string // DeviceToken table.
 	PluginInstall          string // PluginInstall table.
 	PluginMigrationHistory string // PluginMigrationHistory table.
-	RefreshToken           string // RefreshToken table.
 	Role                   string // Role table.
 	RolePermission         string // RolePermission table.
 	Tenant                 string // Tenant table.

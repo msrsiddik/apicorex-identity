@@ -14,12 +14,12 @@ type Tx struct {
 	config
 	// Branch is the client for interacting with the Branch builders.
 	Branch *BranchClient
+	// DeviceToken is the client for interacting with the DeviceToken builders.
+	DeviceToken *DeviceTokenClient
 	// PluginInstall is the client for interacting with the PluginInstall builders.
 	PluginInstall *PluginInstallClient
 	// PluginMigrationHistory is the client for interacting with the PluginMigrationHistory builders.
 	PluginMigrationHistory *PluginMigrationHistoryClient
-	// RefreshToken is the client for interacting with the RefreshToken builders.
-	RefreshToken *RefreshTokenClient
 	// Role is the client for interacting with the Role builders.
 	Role *RoleClient
 	// RolePermission is the client for interacting with the RolePermission builders.
@@ -164,9 +164,9 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.Branch = NewBranchClient(tx.config)
+	tx.DeviceToken = NewDeviceTokenClient(tx.config)
 	tx.PluginInstall = NewPluginInstallClient(tx.config)
 	tx.PluginMigrationHistory = NewPluginMigrationHistoryClient(tx.config)
-	tx.RefreshToken = NewRefreshTokenClient(tx.config)
 	tx.Role = NewRoleClient(tx.config)
 	tx.RolePermission = NewRolePermissionClient(tx.config)
 	tx.Tenant = NewTenantClient(tx.config)

@@ -3,8 +3,8 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
-	"time"
 
 	entuser "github.com/msrsiddik/apicorex-identity/ent/user"
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
@@ -39,8 +39,7 @@ func TestLogin_Success(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	res, err := svc.Login(context.Background(), auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "secret123",
@@ -48,8 +47,13 @@ func TestLogin_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if res.AccessToken == "" || res.RefreshToken == "" {
-		t.Fatal("login should return both tokens")
+	if res.Token == "" || !strings.HasPrefix(res.Token, "zdt_") {
+		t.Fatalf("login should return an opaque zdt_ device token, got %q", res.Token)
+	}
+	// the token resolves to the owner with a full identity
+	id := introspect(t, svc, res.Token)
+	if id.TenantSlug != "acme" || id.UserID == "" {
+		t.Errorf("introspect after login = %+v", id)
 	}
 }
 
@@ -57,8 +61,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	if _, err := svc.Login(context.Background(), auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "wrong",
@@ -67,27 +70,34 @@ func TestLogin_WrongPassword(t *testing.T) {
 	}
 }
 
-func TestLogin_RefreshRotates(t *testing.T) {
+// Logout revokes the device token; introspection rejects it afterwards, and an
+// unknown/garbage hash never resolves.
+func TestLogout_RevokesDeviceToken(t *testing.T) {
+	ctx := context.Background()
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
-	res, err := svc.Login(context.Background(), auth.LoginInput{
+	res, err := svc.Login(ctx, auth.LoginInput{
 		Slug: "acme", Email: "owner@acme.com", Password: "secret123",
 	})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
+	// valid before logout
+	introspect(t, svc, res.Token)
 
-	// refresh with the valid token succeeds
-	if _, err := svc.Refresh(context.Background(), res.RefreshToken); err != nil {
-		t.Fatalf("refresh: %v", err)
+	// garbage token never resolves
+	if _, err := svc.Introspect(ctx, auth.HashToken("zdt_garbage"), ""); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("garbage token introspect err = %v, want ErrInvalidToken", err)
 	}
-	// the old refresh token is now revoked (rotation)
-	if _, err := svc.Refresh(context.Background(), res.RefreshToken); err == nil {
-		t.Fatal("the rotated (old) refresh token should be rejected")
+
+	if err := svc.Logout(ctx, auth.HashToken(res.Token)); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if _, err := svc.Introspect(ctx, auth.HashToken(res.Token), ""); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("introspect after logout err = %v, want ErrInvalidToken", err)
 	}
 }
 
@@ -98,8 +108,7 @@ func TestLogin_MultiTenantRequiresSlug(t *testing.T) {
 	registerTenant(t, pg, "alpha", "multi@x.com")
 	registerTenant(t, pg, "beta", "multi@x.com")
 
-	issuer := auth.NewIssuer("test-secret", 15*time.Minute)
-	svc := auth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	svc := newService(pg)
 
 	// no slug → chooser error with both tenants
 	_, err := svc.Login(context.Background(), auth.LoginInput{
@@ -125,7 +134,7 @@ func TestLoadProfile(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	registerTenant(t, pg, "acme", "owner@acme.com")
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 
 	// the owner's user_id comes from the global users table
 	u, err := pg.EntClient.User.Query().Where(entuser.Email("owner@acme.com")).Only(context.Background())
@@ -149,7 +158,7 @@ func TestInstalledPlugins(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	registerTenant(t, pg, "acme", "owner@acme.com")
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 
 	tn, _ := pg.EntClient.Tenant.Query().Only(context.Background())
 	plugins := svc.InstalledPlugins(context.Background(), tn.ID)

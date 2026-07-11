@@ -21,6 +21,18 @@ func (f BranchFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, erro
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.BranchMutation", m)
 }
 
+// The DeviceTokenFunc type is an adapter to allow the use of ordinary
+// function as DeviceToken mutator.
+type DeviceTokenFunc func(context.Context, *ent.DeviceTokenMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f DeviceTokenFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.DeviceTokenMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.DeviceTokenMutation", m)
+}
+
 // The PluginInstallFunc type is an adapter to allow the use of ordinary
 // function as PluginInstall mutator.
 type PluginInstallFunc func(context.Context, *ent.PluginInstallMutation) (ent.Value, error)
@@ -43,18 +55,6 @@ func (f PluginMigrationHistoryFunc) Mutate(ctx context.Context, m ent.Mutation) 
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PluginMigrationHistoryMutation", m)
-}
-
-// The RefreshTokenFunc type is an adapter to allow the use of ordinary
-// function as RefreshToken mutator.
-type RefreshTokenFunc func(context.Context, *ent.RefreshTokenMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f RefreshTokenFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.RefreshTokenMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RefreshTokenMutation", m)
 }
 
 // The RoleFunc type is an adapter to allow the use of ordinary

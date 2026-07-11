@@ -9,14 +9,14 @@ import (
 // Branch is the predicate function for branch builders.
 type Branch func(*sql.Selector)
 
+// DeviceToken is the predicate function for devicetoken builders.
+type DeviceToken func(*sql.Selector)
+
 // PluginInstall is the predicate function for plugininstall builders.
 type PluginInstall func(*sql.Selector)
 
 // PluginMigrationHistory is the predicate function for pluginmigrationhistory builders.
 type PluginMigrationHistory func(*sql.Selector)
-
-// RefreshToken is the predicate function for refreshtoken builders.
-type RefreshToken func(*sql.Selector)
 
 // Role is the predicate function for role builders.
 type Role func(*sql.Selector)

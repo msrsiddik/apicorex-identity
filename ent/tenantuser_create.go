@@ -46,6 +46,20 @@ func (tuc *TenantUserCreate) SetRoleID(s string) *TenantUserCreate {
 	return tuc
 }
 
+// SetStatus sets the "status" field.
+func (tuc *TenantUserCreate) SetStatus(s string) *TenantUserCreate {
+	tuc.mutation.SetStatus(s)
+	return tuc
+}
+
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (tuc *TenantUserCreate) SetNillableStatus(s *string) *TenantUserCreate {
+	if s != nil {
+		tuc.SetStatus(*s)
+	}
+	return tuc
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (tuc *TenantUserCreate) SetCreatedAt(t time.Time) *TenantUserCreate {
 	tuc.mutation.SetCreatedAt(t)
@@ -111,6 +125,10 @@ func (tuc *TenantUserCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (tuc *TenantUserCreate) defaults() {
+	if _, ok := tuc.mutation.Status(); !ok {
+		v := tenantuser.DefaultStatus
+		tuc.mutation.SetStatus(v)
+	}
 	if _, ok := tuc.mutation.CreatedAt(); !ok {
 		v := tenantuser.DefaultCreatedAt()
 		tuc.mutation.SetCreatedAt(v)
@@ -130,6 +148,9 @@ func (tuc *TenantUserCreate) check() error {
 	}
 	if _, ok := tuc.mutation.RoleID(); !ok {
 		return &ValidationError{Name: "role_id", err: errors.New(`ent: missing required field "TenantUser.role_id"`)}
+	}
+	if _, ok := tuc.mutation.Status(); !ok {
+		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "TenantUser.status"`)}
 	}
 	if _, ok := tuc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "TenantUser.created_at"`)}
@@ -183,6 +204,10 @@ func (tuc *TenantUserCreate) createSpec() (*TenantUser, *sqlgraph.CreateSpec) {
 	if value, ok := tuc.mutation.RoleID(); ok {
 		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
 		_node.RoleID = value
+	}
+	if value, ok := tuc.mutation.Status(); ok {
+		_spec.SetField(tenantuser.FieldStatus, field.TypeString, value)
+		_node.Status = value
 	}
 	if value, ok := tuc.mutation.CreatedAt(); ok {
 		_spec.SetField(tenantuser.FieldCreatedAt, field.TypeTime, value)

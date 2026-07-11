@@ -1,13 +1,11 @@
 package main
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
 	"github.com/msrsiddik/apicorex-identity/internal/plugin"
 	"github.com/msrsiddik/apicorex-identity/internal/pluginmgr"
@@ -78,9 +76,11 @@ type LoginRequest struct {
 	Password string `json:"password" example:"secret123"`
 }
 
+// LoginResponse carries the single opaque device token. There is no refresh
+// token and no expiry — the token stays valid until revoked (logout, member
+// removal/suspension of its owner).
 type LoginResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	Token string `json:"token"`
 }
 
 // TenantChooserResponse is returned when a user belongs to multiple tenants and
@@ -90,16 +90,16 @@ type TenantChooserResponse struct {
 	Tenants []auth.TenantOption `json:"tenants"`
 }
 
-type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token"`
-}
-
-type LogoutRequest struct {
-	RefreshToken string `json:"refresh_token"`
-}
-
 type LogoutResponse struct {
 	Message string `json:"message" example:"logged out"`
+}
+
+// IntrospectRequest is Core's plugin-to-plugin token resolution call. token_hash
+// is the sha256 of the raw bearer; acting_user_id is the PIN-unlocked user the
+// device claims (empty = the token's owner).
+type IntrospectRequest struct {
+	TokenHash    string `json:"token_hash"`
+	ActingUserID string `json:"acting_user_id"`
 }
 
 type MeResponse struct {
@@ -202,6 +202,11 @@ type AddMemberResponse struct {
 	Message string `json:"message" example:"member added"`
 }
 
+// SetMemberStatusRequest suspends or reactivates a member. status: "active" | "suspended".
+type SetMemberStatusRequest struct {
+	Status string `json:"status" example:"suspended"`
+}
+
 type SwitchBranchRequest struct {
 	BranchID string `json:"branch_id" example:"br_1a2b3c4d"`
 }
@@ -245,6 +250,32 @@ type VerifyPinResponse struct {
 	Ok bool `json:"ok"`
 }
 
+// ResolvePinResponse identifies which member a PIN belongs to (shared-till
+// unlock by PIN alone).
+type ResolvePinResponse struct {
+	UserID   string `json:"user_id"`
+	FullName string `json:"full_name"`
+	Email    string `json:"email"`
+}
+
+// PinAvailableRequest checks whether a PIN is free within the tenant, optionally
+// excluding one member (so they can keep their own PIN when re-saving).
+type PinAvailableRequest struct {
+	Pin          string `json:"pin"`
+	ExceptUserID string `json:"except_user_id"`
+}
+
+// UpdateProfileRequest patches the caller's own PII. Empty fields are unchanged.
+type UpdateProfileRequest struct {
+	FullName string `json:"full_name"`
+	Phone    string `json:"phone"`
+	JobTitle string `json:"job_title"`
+}
+
+type PinAvailableResponse struct {
+	Available bool `json:"available"`
+}
+
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
@@ -266,16 +297,21 @@ type handlers struct {
 	authSvc   *auth.Service
 	saga      *tenant.Saga
 	installer *pluginmgr.Installer
+	pluginKey string // shared PLUGIN_API_KEY guarding /internal/* plugin-to-plugin routes
 }
 
 // registerRoutes wires all identity routes onto the plugin.
 func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/register")
 	p.Public("/auth/login")
-	p.Public("/auth/refresh")
 	p.Public("/auth/slug-available")
 	p.Public("/auth/slug-suggest")
 	p.Public("/admin")
+
+	// Plugin-to-plugin: Core resolves every request's bearer through this. Not
+	// in the manifest — Core never proxies it publicly; it's guarded by the
+	// shared PLUGIN_API_KEY instead of a user token.
+	p.Internal(http.MethodPost, "/internal/introspect", h.introspect)
 
 	p.GET("/admin", serveAdmin,
 		option.Summary("Platform admin UI"),
@@ -311,7 +347,7 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	)
 	p.POST("/auth/login", h.login,
 		option.Summary("Login"),
-		option.Description("Returns access_token (15min) + refresh_token (7 days). "+
+		option.Description("Returns a single opaque device token (no expiry — valid until revoked). "+
 			"If the user belongs to multiple tenants and no slug is supplied, returns "+
 			"409 with a TenantChooserResponse — pick a tenant and retry with its slug."),
 		option.Tags("auth"),
@@ -320,17 +356,10 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Response(http.StatusConflict, new(TenantChooserResponse)),
 		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
 	)
-	p.POST("/auth/refresh", h.refresh,
-		option.Summary("Refresh access token"),
-		option.Tags("auth"),
-		option.Request(new(RefreshRequest)),
-		option.Response(http.StatusOK, new(LoginResponse)),
-	)
 	p.POST("/auth/logout", h.logout,
 		option.Summary("Logout"),
-		option.Description("Revokes the refresh token and denylists the access token"),
+		option.Description("Revokes the calling device token"),
 		option.Tags("auth"),
-		option.Request(new(LogoutRequest)),
 		option.Response(http.StatusOK, new(LogoutResponse)),
 	)
 	p.GET("/me", h.me,
@@ -437,10 +466,11 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	)
 	p.POST("/branches/switch", h.switchBranch,
 		option.Summary("Switch the active branch"),
-		option.Description("Issues a fresh token pair scoped to another branch the caller belongs to in their current tenant."),
+		option.Description("Re-scopes the calling device token to another branch the caller belongs to "+
+			"in their current tenant. The token string itself is unchanged."),
 		option.Tags("branches"),
 		option.Request(new(SwitchBranchRequest)),
-		option.Response(http.StatusOK, new(LoginResponse)),
+		option.Response(http.StatusOK, new(BranchResponse)),
 		option.Response(http.StatusForbidden, new(ErrorResponse)),
 	)
 	p.GET("/members", h.listMembers,
@@ -454,6 +484,13 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Description("Owner/admin only. Refused when it would demote the tenant's last manager."),
 		option.Tags("members"),
 		option.Request(new(UpdateMemberRoleRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPatch, "/members/:userId/status", h.setMemberStatus,
+		option.Summary("Suspend or reactivate a member"),
+		option.Description("Owner/admin only. Sets status active|suspended. A suspended member can't sign in, refresh, or unlock until reactivated (reversible, unlike remove). Refused for yourself or the last manager."),
+		option.Tags("members"),
+		option.Request(new(SetMemberStatusRequest)),
 		option.Response(http.StatusOK, new(MessageResponse)),
 	)
 	p.Handle(http.MethodDelete, "/members/:userId", h.removeMember,
@@ -471,10 +508,21 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	)
 	p.Handle(http.MethodPatch, "/members/:userId/pin", h.setMemberPin,
 		option.Summary("Set a member's device-unlock PIN"),
-		option.Description("Owner/admin only. Lets an owner provision a staff member's PIN centrally."),
+		option.Description("Owner/admin only. Lets an owner provision a staff member's PIN centrally. "+
+			"Refused (409, code pin_taken) if another active member already uses that PIN."),
 		option.Tags("members"),
 		option.Request(new(SetPinRequest)),
 		option.Response(http.StatusOK, new(MessageResponse)),
+		option.Response(http.StatusConflict, new(ErrorResponse)),
+	)
+	p.Handle(http.MethodPost, "/members/pin/available", h.pinAvailable,
+		option.Summary("Check whether a device-unlock PIN is free in the tenant"),
+		option.Description("Owner/admin only. Realtime uniqueness check for the member form: returns "+
+			"available=false when another active member already uses the PIN. except_user_id keeps a "+
+			"member's own PIN available when re-saving."),
+		option.Tags("members"),
+		option.Request(new(PinAvailableRequest)),
+		option.Response(http.StatusOK, new(PinAvailableResponse)),
 	)
 	p.Handle(http.MethodPost, "/me/pin/verify", h.verifyOwnPin,
 		option.Summary("Verify your PIN against the stored hash"),
@@ -482,6 +530,24 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Tags("members"),
 		option.Request(new(SetPinRequest)),
 		option.Response(http.StatusOK, new(VerifyPinResponse)),
+	)
+	p.Handle(http.MethodPost, "/me/pin/resolve", h.resolvePin,
+		option.Summary("Resolve which member a device-unlock PIN belongs to"),
+		option.Description("Shared-till unlock: given a PIN, returns the active member of the "+
+			"caller's tenant whose PIN matches — so ANY staff can unlock a device by PIN alone, "+
+			"even one who never enrolled on it. Authorized by the device token; no permission "+
+			"required (the PIN itself decides the acting user). 401 when no active member matches."),
+		option.Tags("members"),
+		option.Request(new(SetPinRequest)),
+		option.Response(http.StatusOK, new(ResolvePinResponse)),
+		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+	)
+	p.Handle(http.MethodPatch, "/me/profile", h.updateOwnProfile,
+		option.Summary("Update your own name / phone / job title"),
+		option.Description("Any signed-in user edits their own PII. Empty fields are left unchanged."),
+		option.Tags("members"),
+		option.Request(new(UpdateProfileRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
 	)
 	p.Handle(http.MethodPatch, "/me/password", h.changeOwnPassword,
 		option.Summary("Change your own password"),
@@ -546,7 +612,9 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.RequirePermission(http.MethodGet, "/members", rbac.PermUserRead)
 	p.RequirePermission(http.MethodPatch, "/members/:userId", rbac.PermUserInvite)
 	p.RequirePermission(http.MethodDelete, "/members/:userId", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodPatch, "/members/:userId/status", rbac.PermUserInvite)
 	p.RequirePermission(http.MethodPatch, "/members/:userId/pin", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodPost, "/members/pin/available", rbac.PermUserInvite)
 	p.RequirePermission(http.MethodPatch, "/members/:userId/password", rbac.PermUserInvite)
 	// /me/pin and /me/password act on the caller's own profile — no permission required.
 	p.RequirePermission(http.MethodPost, "/plugins/install", rbac.PermPluginInstall)
@@ -678,36 +746,51 @@ func (h *handlers) login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, LoginResponse{AccessToken: res.AccessToken, RefreshToken: res.RefreshToken})
+	c.JSON(http.StatusOK, LoginResponse{Token: res.Token})
 }
 
-func (h *handlers) refresh(c *gin.Context) {
-	var in RefreshRequest
-	if err := c.ShouldBindJSON(&in); err != nil {
+// introspect is Core's per-request token resolution (plugin-to-plugin, guarded
+// by the shared PLUGIN_API_KEY — never proxied publicly). It turns a device
+// token hash + optional acting user into the trusted request identity.
+func (h *handlers) introspect(c *gin.Context) {
+	if h.pluginKey == "" ||
+		subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Plugin-Key")), []byte(h.pluginKey)) != 1 {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "invalid plugin key"})
+		return
+	}
+	var in IntrospectRequest
+	if err := c.ShouldBindJSON(&in); err != nil || in.TokenHash == "" {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return
 	}
-	res, err := h.authSvc.Refresh(c.Request.Context(), in.RefreshToken)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: err.Error()})
-		return
+	res, err := h.authSvc.Introspect(c.Request.Context(), in.TokenHash, in.ActingUserID)
+	switch {
+	case errors.Is(err, auth.ErrInvalidToken):
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "invalid token"})
+	case errors.Is(err, auth.ErrMembershipRevoked):
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "membership revoked"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, res)
 	}
-	c.JSON(http.StatusOK, LoginResponse{AccessToken: res.AccessToken, RefreshToken: res.RefreshToken})
 }
 
 func (h *handlers) logout(c *gin.Context) {
-	var in LogoutRequest
-	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
-		return
-	}
-	// extract the access token's jti + exp from the Authorization header so we can denylist it
-	jti, exp := accessTokenJTIExp(c)
-	if err := h.authSvc.Logout(c.Request.Context(), in.RefreshToken, jti, exp); err != nil {
+	// Core injects the trusted hash of the calling bearer; revoke exactly that row.
+	if err := h.authSvc.Logout(c.Request.Context(), plugin.TokenHash(c)); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, LogoutResponse{Message: "logged out"})
+}
+
+// orEmpty returns a non-nil slice so it marshals as [] rather than null.
+func orEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func (h *handlers) me(c *gin.Context) {
@@ -716,15 +799,29 @@ func (h *handlers) me(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
 		return
 	}
+	// Re-check membership on every /me: the JWT stays valid until it expires, but
+	// an owner may have removed this user since it was issued. Rejecting here is
+	// what lets the device boot a removed staff the next time it comes online.
+	// Only meaningful for tenant-scoped users; a token with no tenant (e.g. a
+	// platform admin) skips the check.
+	if tenantID := plugin.TenantID(c); tenantID != "" {
+		if ok, err := h.authSvc.IsMember(c.Request.Context(), tenantID, userID); err == nil && !ok {
+			c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "membership revoked"})
+			return
+		}
+	}
 	resp := MeResponse{
-		UserID:           userID,
-		TenantID:         plugin.TenantID(c),
-		TenantSlug:       plugin.TenantSlug(c),
-		BranchID:         plugin.BranchID(c),
-		BranchSlug:       plugin.BranchSlug(c),
-		UserType:         plugin.UserType(c),
-		Roles:            plugin.Roles(c),
-		Permissions:      plugin.Permissions(c),
+		UserID:     userID,
+		TenantID:   plugin.TenantID(c),
+		TenantSlug: plugin.TenantSlug(c),
+		BranchID:   plugin.BranchID(c),
+		BranchSlug: plugin.BranchSlug(c),
+		UserType:   plugin.UserType(c),
+		// Non-nil slices so they marshal as [] not null — a platform admin (or
+		// any role with no perms) has empty lists, and clients decode
+		// roles/permissions as non-optional arrays (a null would fail decoding).
+		Roles:            orEmpty(plugin.Roles(c)),
+		Permissions:      orEmpty(plugin.Permissions(c)),
 		InstalledPlugins: h.authSvc.InstalledPlugins(c.Request.Context(), plugin.TenantID(c)),
 	}
 	// load PII profile from the tenant schema (best-effort)
@@ -1020,12 +1117,12 @@ func (h *handlers) switchBranch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return
 	}
-	res, err := h.authSvc.SwitchBranch(c.Request.Context(), userID, tenantID, in.BranchID)
+	b, err := h.authSvc.SwitchBranch(c.Request.Context(), userID, tenantID, in.BranchID, plugin.TokenHash(c))
 	if err != nil {
 		c.JSON(http.StatusForbidden, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, LoginResponse{AccessToken: res.AccessToken, RefreshToken: res.RefreshToken})
+	c.JSON(http.StatusOK, BranchResponse{Branch: *b})
 }
 
 func (h *handlers) listMembers(c *gin.Context) {
@@ -1101,6 +1198,38 @@ func (h *handlers) removeMember(c *gin.Context) {
 	}
 }
 
+func (h *handlers) setMemberStatus(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserInvite) {
+		return
+	}
+	// You can't suspend yourself — same lock-yourself-out guard as remove.
+	if c.Param("userId") == plugin.UserID(c) {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "you cannot suspend yourself", Code: "self_suspend"})
+		return
+	}
+	var in SetMemberStatusRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	err := h.authSvc.SetMemberStatus(c.Request.Context(), tenantID, c.Param("userId"), in.Status)
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrLastManager):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "cannot suspend the tenant's last manager", Code: "last_manager"})
+	case err != nil:
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "member status updated"})
+	}
+}
+
 func (h *handlers) setOwnPin(c *gin.Context) {
 	tenantID, userID := plugin.TenantID(c), plugin.UserID(c)
 	if tenantID == "" || userID == "" {
@@ -1115,11 +1244,50 @@ func (h *handlers) setOwnPin(c *gin.Context) {
 	switch err := h.authSvc.SetOwnPin(c.Request.Context(), tenantID, userID, in.Pin); {
 	case errors.Is(err, auth.ErrInvalidPin):
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "pin must be 4 digits", Code: "invalid_pin"})
+	case errors.Is(err, auth.ErrPinTaken):
+		c.JSON(http.StatusConflict, ErrorResponse{Error: "pin already used by another member", Code: "pin_taken"})
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 	default:
 		c.JSON(http.StatusOK, MessageResponse{Message: "pin set"})
 	}
+}
+
+func (h *handlers) updateOwnProfile(c *gin.Context) {
+	tenantID, userID := plugin.TenantID(c), plugin.UserID(c)
+	if tenantID == "" || userID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in UpdateProfileRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if err := h.authSvc.UpdateOwnProfile(c.Request.Context(), tenantID, userID, in.FullName, in.Phone, in.JobTitle); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "profile updated"})
+}
+
+func (h *handlers) pinAvailable(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in PinAvailableRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	ok, err := h.authSvc.PinAvailable(c.Request.Context(), tenantID, in.Pin, in.ExceptUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, PinAvailableResponse{Available: ok})
 }
 
 func (h *handlers) verifyOwnPin(c *gin.Context) {
@@ -1141,6 +1309,28 @@ func (h *handlers) verifyOwnPin(c *gin.Context) {
 	c.JSON(http.StatusOK, VerifyPinResponse{Ok: ok})
 }
 
+func (h *handlers) resolvePin(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in SetPinRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	m, err := h.authSvc.ResolvePin(c.Request.Context(), tenantID, in.Pin)
+	switch {
+	case errors.Is(err, auth.ErrInvalidPin):
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "invalid pin", Code: "invalid_pin"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, ResolvePinResponse{UserID: m.UserID, FullName: m.FullName, Email: m.Email})
+	}
+}
+
 func (h *handlers) setMemberPin(c *gin.Context) {
 	tenantID := plugin.TenantID(c)
 	if tenantID == "" {
@@ -1160,6 +1350,8 @@ func (h *handlers) setMemberPin(c *gin.Context) {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
 	case errors.Is(err, auth.ErrInvalidPin):
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "pin must be 4 digits", Code: "invalid_pin"})
+	case errors.Is(err, auth.ErrPinTaken):
+		c.JSON(http.StatusConflict, ErrorResponse{Error: "pin already used by another member", Code: "pin_taken"})
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 	default:
@@ -1315,23 +1507,3 @@ func (h *handlers) updateTenant(c *gin.Context) {
 	c.JSON(http.StatusOK, TenantResponse{Tenant: *t})
 }
 
-// accessTokenJTIExp parses (without verifying — Core already verified) the bearer
-// token to read its jti and expiry, for denylisting on logout.
-func accessTokenJTIExp(c *gin.Context) (string, time.Time) {
-	header := c.GetHeader("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		return "", time.Time{}
-	}
-	tokenStr := strings.TrimPrefix(header, "Bearer ")
-	var claims jwt.RegisteredClaims
-	parser := jwt.NewParser()
-	_, _, err := parser.ParseUnverified(tokenStr, &claims)
-	if err != nil {
-		return "", time.Time{}
-	}
-	var exp time.Time
-	if claims.ExpiresAt != nil {
-		exp = claims.ExpiresAt.Time
-	}
-	return claims.ID, exp
-}

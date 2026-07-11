@@ -35,6 +35,7 @@ func (TenantUser) Fields() []ent.Field {
 		field.String("tenant_id"),
 		field.String("branch_id"),          // the branch this user is currently active in
 		field.String("role_id"),            // -> roles.id (system or tenant role); tenant-level, unaffected by branch switch
+		field.String("status").Default("active"), // active | suspended — a suspended member can't sign in/refresh/unlock until reactivated (reversible, unlike remove)
 		field.Time("created_at").Default(time.Now).Immutable(),
 	}
 }

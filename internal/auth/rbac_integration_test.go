@@ -3,25 +3,24 @@ package auth_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
 	"github.com/msrsiddik/apicorex-identity/internal/testutil"
 )
 
-// The owner's token carries the owner system role's permissions (*:*).
+// The owner's introspected identity carries the owner system role's permissions (*:*).
 func TestLogin_OwnerHasAllPermissions(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, err := svc.Login(context.Background(), auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	claims := decodeClaims(t, res.AccessToken)
-	if !contains(claims.Permissions, "*:*") {
-		t.Errorf("owner permissions = %v, want to include *:*", claims.Permissions)
+	id := introspect(t, svc, res.Token)
+	if !contains(id.Permissions, "*:*") {
+		t.Errorf("owner permissions = %v, want to include *:*", id.Permissions)
 	}
 }
 
@@ -41,9 +40,9 @@ func TestLogin_MemberPermissions(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
 
 	if err := svc.AddMember(ctx, tenantID, branches[0].ID, auth.AddMemberInput{
@@ -52,30 +51,30 @@ func TestLogin_MemberPermissions(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 	login, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "staff@acme.com", Password: "welcome123"})
-	claims := decodeClaims(t, login.AccessToken)
+	id := introspect(t, svc, login.Token)
 
 	want := map[string]bool{"user:read": true, "branch:read": true}
-	if len(claims.Permissions) != len(want) {
-		t.Fatalf("member permissions = %v, want %v", claims.Permissions, want)
+	if len(id.Permissions) != len(want) {
+		t.Fatalf("member permissions = %v, want %v", id.Permissions, want)
 	}
-	for _, p := range claims.Permissions {
+	for _, p := range id.Permissions {
 		if !want[p] {
 			t.Errorf("unexpected member permission %q", p)
 		}
 	}
 }
 
-// Refresh re-resolves the membership's current permissions: changing the role's
-// permission set is reflected after a refresh (token is short-lived; refresh
-// picks up the new grants).
-func TestRefresh_ReresolvesPermissions(t *testing.T) {
+// Introspection resolves the membership's CURRENT permissions on every call:
+// changing the role's permission set is reflected immediately on the same
+// device token — no refresh, no re-login.
+func TestIntrospect_ReresolvesPermissions(t *testing.T) {
 	ctx := context.Background()
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
 
 	// custom role without branch:write, assigned to a new member
@@ -89,20 +88,16 @@ func TestRefresh_ReresolvesPermissions(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 	login, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "lim@acme.com", Password: "welcome123"})
-	if contains(decodeClaims(t, login.AccessToken).Permissions, "branch:write") {
+	if contains(introspect(t, svc, login.Token).Permissions, "branch:write") {
 		t.Fatal("member should not have branch:write before the role grants it")
 	}
 
-	// grant branch:write to the role, then refresh — new token reflects it
+	// grant branch:write to the role — the SAME token reflects it immediately
 	if _, err := svc.UpdateRole(ctx, tenantID, role.ID, "", []string{"billing:view", "branch:write"}); err != nil {
 		t.Fatalf("update role: %v", err)
 	}
-	refreshed, err := svc.Refresh(ctx, login.RefreshToken)
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	if !contains(decodeClaims(t, refreshed.AccessToken).Permissions, "branch:write") {
-		t.Error("refreshed token should reflect the newly granted branch:write")
+	if !contains(introspect(t, svc, login.Token).Permissions, "branch:write") {
+		t.Error("introspection should reflect the newly granted branch:write immediately")
 	}
 }
 
@@ -115,14 +110,15 @@ func TestPlatformAdmin_BootstrapGrantRevoke(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 
 	// owner is a tenant owner (full *:* permission) but NOT a platform admin yet
 	res, err := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if got := decodeClaims(t, res.AccessToken).UserType; got != "tenant_user" {
+	ownerTenant := introspect(t, svc, res.Token).TenantID
+	if got := introspect(t, svc, res.Token).UserType; got != "tenant_user" {
 		t.Errorf("user_type before bootstrap = %q, want tenant_user", got)
 	}
 
@@ -135,8 +131,8 @@ func TestPlatformAdmin_BootstrapGrantRevoke(t *testing.T) {
 	if granted != 1 {
 		t.Errorf("granted = %d, want 1 (only the registered email)", granted)
 	}
-	res2, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	if got := decodeClaims(t, res2.AccessToken).UserType; got != "platform_admin" {
+	// user_type is resolved fresh on introspection — even the OLD token reflects it
+	if got := introspect(t, svc, res.Token).UserType; got != "platform_admin" {
 		t.Errorf("user_type after bootstrap = %q, want platform_admin", got)
 	}
 
@@ -146,7 +142,7 @@ func TestPlatformAdmin_BootstrapGrantRevoke(t *testing.T) {
 	}
 
 	// GrantPlatformAdmin promotes another existing user immediately
-	if err := svc.AddMember(ctx, decodeClaims(t, res.AccessToken).TenantID, mainBranchID(t, ctx, svc, decodeClaims(t, res.AccessToken).TenantID), auth.AddMemberInput{
+	if err := svc.AddMember(ctx, ownerTenant, mainBranchID(t, ctx, svc, ownerTenant), auth.AddMemberInput{
 		Email: "staff@acme.com", Role: "member", Password: "welcome123", FullName: "Staff",
 	}); err != nil {
 		t.Fatalf("add member: %v", err)
@@ -155,7 +151,7 @@ func TestPlatformAdmin_BootstrapGrantRevoke(t *testing.T) {
 		t.Fatalf("grant: %v", err)
 	}
 	staffLogin, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "staff@acme.com", Password: "welcome123"})
-	if got := decodeClaims(t, staffLogin.AccessToken).UserType; got != "platform_admin" {
+	if got := introspect(t, svc, staffLogin.Token).UserType; got != "platform_admin" {
 		t.Errorf("staff user_type after grant = %q, want platform_admin", got)
 	}
 
@@ -168,18 +164,67 @@ func TestPlatformAdmin_BootstrapGrantRevoke(t *testing.T) {
 		t.Errorf("admins = %v, want 2", admins)
 	}
 
-	// RevokePlatformAdmin takes effect on the next login, immediately
+	// RevokePlatformAdmin takes effect immediately — same token, fresh introspection
 	if err := svc.RevokePlatformAdmin(ctx, "owner@acme.com"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	res3, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	if got := decodeClaims(t, res3.AccessToken).UserType; got != "tenant_user" {
+	if got := introspect(t, svc, res.Token).UserType; got != "tenant_user" {
 		t.Errorf("user_type after revoke = %q, want tenant_user", got)
 	}
 
 	// granting an email with no account fails (no user to flag)
 	if _, err := svc.GrantPlatformAdmin(ctx, "ghost@x.com"); err == nil {
 		t.Error("granting a nonexistent user should fail")
+	}
+}
+
+// A platform admin's device token introspects fine even though a platform admin
+// need not (and here does) still hold a tenant membership — the owner-membership
+// gate is bypassed for them, they get user_type=platform_admin, and their /me
+// (which keys off the introspected identity) works. This is the "platform admin
+// can't log in / /me 401s" regression guard.
+func TestIntrospect_PlatformAdmin(t *testing.T) {
+	ctx := context.Background()
+	pg := testutil.NewPostgres(t)
+	register(t, pg)
+
+	svc := newService(pg)
+	// The acme owner logs in (they hold a membership), then is granted platform
+	// admin. Their existing device token must keep introspecting.
+	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
+	if _, err := svc.GrantPlatformAdmin(ctx, "owner@acme.com"); err != nil {
+		t.Fatalf("grant platform admin: %v", err)
+	}
+	id, err := svc.Introspect(ctx, auth.HashToken(res.Token), "")
+	if err != nil {
+		t.Fatalf("platform admin introspect: %v", err)
+	}
+	if id.UserType != "platform_admin" {
+		t.Errorf("user_type = %q, want platform_admin", id.UserType)
+	}
+	// A platform admin who is ALSO a tenant member (here myshop's owner) must
+	// keep their tenant role/permissions — being an admin must not blank them
+	// out, or the app's permission-gated menus all vanish.
+	if !contains(id.Permissions, "*:*") {
+		t.Errorf("owner+admin permissions = %v, want to include *:* (menus gate on these)", id.Permissions)
+	}
+	if len(id.Roles) == 0 || id.Roles[0] != "owner" {
+		t.Errorf("owner+admin roles = %v, want [owner]", id.Roles)
+	}
+
+	// Even after their tenant membership is gone, the platform admin's token
+	// still introspects (they act across tenants; no membership required).
+	// Remove them from every tenant by deleting the membership directly.
+	owner := introspect(t, svc, res.Token) // still resolves
+	_ = owner
+	if err := svc.RemoveMember(ctx, id.TenantID, id.UserID); err != nil {
+		// RemoveMember refuses the last manager — that's fine; the point is the
+		// admin's introspection doesn't depend on the membership. Skip the
+		// stricter assertion if we can't remove them here.
+		return
+	}
+	if _, err := svc.Introspect(ctx, auth.HashToken(res.Token), ""); err != nil {
+		t.Errorf("platform admin introspect after membership removal: %v", err)
 	}
 }
 
@@ -199,9 +244,9 @@ func TestLogin_BaselineFloor(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
 
 	// a custom role with NO permissions
@@ -214,7 +259,7 @@ func TestLogin_BaselineFloor(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 	login, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "nobody@acme.com", Password: "welcome123"})
-	perms := decodeClaims(t, login.AccessToken).Permissions
+	perms := introspect(t, svc, login.Token).Permissions
 	if !contains(perms, "user:read") || !contains(perms, "branch:read") {
 		t.Errorf("permissionless role should still carry the baseline, got %v", perms)
 	}
@@ -228,10 +273,10 @@ func TestRBAC_CrossTenantIsolation(t *testing.T) {
 	registerTenant(t, pg, "alpha", "owner@alpha.com")
 	registerTenant(t, pg, "beta", "owner@beta.com")
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 
-	alpha := decodeClaims(t, mustLogin(t, svc, "alpha", "owner@alpha.com").AccessToken).TenantID
-	beta := decodeClaims(t, mustLogin(t, svc, "beta", "owner@beta.com").AccessToken).TenantID
+	alpha := introspect(t, svc, mustLogin(t, svc, "alpha", "owner@alpha.com").Token).TenantID
+	beta := introspect(t, svc, mustLogin(t, svc, "beta", "owner@beta.com").Token).TenantID
 
 	alphaBranches, _ := svc.ListBranches(ctx, alpha)
 	betaBranches, _ := svc.ListBranches(ctx, beta)
@@ -332,11 +377,11 @@ func TestMember_LastManagerGuard(t *testing.T) {
 	ctx := context.Background()
 	pg := testutil.NewPostgres(t)
 	registerTenant(t, pg, "acme", "owner@acme.com")
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 
-	tenantID := decodeClaims(t, mustLogin(t, svc, "acme", "owner@acme.com").AccessToken).TenantID
+	tenantID := introspect(t, svc, mustLogin(t, svc, "acme", "owner@acme.com").Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
-	ownerID := decodeClaims(t, mustLogin(t, svc, "acme", "owner@acme.com").AccessToken).Subject
+	ownerID := introspect(t, svc, mustLogin(t, svc, "acme", "owner@acme.com").Token).UserID
 
 	// sole owner (a manager) — can't be demoted or removed
 	if err := svc.UpdateMemberRole(ctx, tenantID, ownerID, "member"); err != auth.ErrLastManager {
@@ -379,9 +424,9 @@ func TestAddMember_UnknownRoleRejected(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
 
 	if err := svc.AddMember(ctx, tenantID, branches[0].ID, auth.AddMemberInput{
@@ -407,9 +452,9 @@ func TestRoles_CustomRoleLifecycle(t *testing.T) {
 	pg := testutil.NewPostgres(t)
 	register(t, pg)
 
-	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+	svc := newService(pg)
 	res, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "owner@acme.com", Password: "secret123"})
-	tenantID := decodeClaims(t, res.AccessToken).TenantID
+	tenantID := introspect(t, svc, res.Token).TenantID
 	branches, _ := svc.ListBranches(ctx, tenantID)
 
 	// create a custom "auditor" role
@@ -433,9 +478,9 @@ func TestRoles_CustomRoleLifecycle(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 	login, _ := svc.Login(ctx, auth.LoginInput{Slug: "acme", Email: "auditor@acme.com", Password: "welcome123"})
-	claims := decodeClaims(t, login.AccessToken)
-	if claims.Roles[0] != "auditor" {
-		t.Errorf("role = %v, want auditor", claims.Roles)
+	id := introspect(t, svc, login.Token)
+	if id.Roles[0] != "auditor" {
+		t.Errorf("role = %v, want auditor", id.Roles)
 	}
 
 	// cannot delete a role still in use

@@ -3,7 +3,7 @@
   entrypoint = "./tmp/identity"
   delay = 1000
   exclude_dir = ["tmp", "vendor", "ent"]
-  include_ext = ["go", "env"]
+  include_ext = ["go", "env", "html"]
   kill_delay = "2s"
   rerun_delay = 500
 

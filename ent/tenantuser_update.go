@@ -86,6 +86,20 @@ func (tuu *TenantUserUpdate) SetNillableRoleID(s *string) *TenantUserUpdate {
 	return tuu
 }
 
+// SetStatus sets the "status" field.
+func (tuu *TenantUserUpdate) SetStatus(s string) *TenantUserUpdate {
+	tuu.mutation.SetStatus(s)
+	return tuu
+}
+
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (tuu *TenantUserUpdate) SetNillableStatus(s *string) *TenantUserUpdate {
+	if s != nil {
+		tuu.SetStatus(*s)
+	}
+	return tuu
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (tuu *TenantUserUpdate) SetUser(u *User) *TenantUserUpdate {
 	return tuu.SetUserID(u.ID)
@@ -168,6 +182,9 @@ func (tuu *TenantUserUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := tuu.mutation.RoleID(); ok {
 		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
+	}
+	if value, ok := tuu.mutation.Status(); ok {
+		_spec.SetField(tenantuser.FieldStatus, field.TypeString, value)
 	}
 	if tuu.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -309,6 +326,20 @@ func (tuuo *TenantUserUpdateOne) SetNillableRoleID(s *string) *TenantUserUpdateO
 	return tuuo
 }
 
+// SetStatus sets the "status" field.
+func (tuuo *TenantUserUpdateOne) SetStatus(s string) *TenantUserUpdateOne {
+	tuuo.mutation.SetStatus(s)
+	return tuuo
+}
+
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (tuuo *TenantUserUpdateOne) SetNillableStatus(s *string) *TenantUserUpdateOne {
+	if s != nil {
+		tuuo.SetStatus(*s)
+	}
+	return tuuo
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (tuuo *TenantUserUpdateOne) SetUser(u *User) *TenantUserUpdateOne {
 	return tuuo.SetUserID(u.ID)
@@ -421,6 +452,9 @@ func (tuuo *TenantUserUpdateOne) sqlSave(ctx context.Context) (_node *TenantUser
 	}
 	if value, ok := tuuo.mutation.RoleID(); ok {
 		_spec.SetField(tenantuser.FieldRoleID, field.TypeString, value)
+	}
+	if value, ok := tuuo.mutation.Status(); ok {
+		_spec.SetField(tenantuser.FieldStatus, field.TypeString, value)
 	}
 	if tuuo.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

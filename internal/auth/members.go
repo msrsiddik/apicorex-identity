@@ -21,6 +21,7 @@ type MemberInfo struct {
 	RoleSlug string `json:"role_slug"`
 	RoleName string `json:"role_name"`
 	BranchID string `json:"branch_id"`
+	Status   string `json:"status"` // active | suspended
 }
 
 // ListMembers returns every member of the given tenant.
@@ -102,6 +103,7 @@ func (s *Service) ListMembers(ctx context.Context, tenantID string) ([]MemberInf
 			RoleSlug: slug,
 			RoleName: name,
 			BranchID: m.BranchID,
+			Status:   m.Status,
 		})
 	}
 	return out, nil

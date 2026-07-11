@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/msrsiddik/apicorex-identity/ent"
 	"github.com/msrsiddik/apicorex-identity/ent/branch"
+	"github.com/msrsiddik/apicorex-identity/ent/devicetoken"
 	"github.com/msrsiddik/apicorex-identity/ent/tenant"
 	"github.com/msrsiddik/apicorex-identity/ent/tenantuser"
 	entuser "github.com/msrsiddik/apicorex-identity/ent/user"
@@ -206,34 +207,38 @@ func (s *Service) AddMember(ctx context.Context, tenantID, branchID string, in A
 	return nil
 }
 
-// SwitchBranch moves the user's single membership in their current tenant to a
-// different branch and issues a fresh token pair scoped to it. The role is
-// unaffected (role is tenant-level, not branch-level) — this only changes
-// which branch the user is currently active in. tenantID/userID come from the
-// caller's verified context.
-func (s *Service) SwitchBranch(ctx context.Context, userID, tenantID, branchID string) (*LoginResult, error) {
+// SwitchBranch re-scopes the calling DEVICE to a different branch: it updates
+// the device token row's branch_id (no new token is minted — the opaque token
+// string stays the same) and moves the user's membership's current branch along
+// with it. The role is unaffected (role is tenant-level, not branch-level).
+// tenantID/userID/tokenHash come from the caller's verified context.
+func (s *Service) SwitchBranch(ctx context.Context, userID, tenantID, branchID, tokenHash string) (*BranchInfo, error) {
 	m, err := s.entClient.TenantUser.Query().
 		Where(tenantuser.UserID(userID), tenantuser.TenantID(tenantID)).
 		Only(ctx)
 	if err != nil {
 		return nil, errors.New("no access to tenant")
 	}
-	t, err := s.entClient.Tenant.Query().Where(tenant.ID(tenantID), tenant.Status("active")).Only(ctx)
-	if err != nil {
+	if _, err := s.entClient.Tenant.Query().Where(tenant.ID(tenantID), tenant.Status("active")).Only(ctx); err != nil {
 		return nil, errors.New("tenant not available")
 	}
 	b, err := s.entClient.Branch.Query().Where(branch.ID(branchID), branch.TenantID(tenantID)).Only(ctx)
 	if err != nil || b.Status != "active" {
 		return nil, errors.New("branch not available")
 	}
-	u, err := s.entClient.User.Get(ctx, userID)
-	if err != nil {
-		return nil, errors.New("user not found")
-	}
 	if m.BranchID != branchID {
 		if _, err := s.entClient.TenantUser.UpdateOneID(m.ID).SetBranchID(branchID).Save(ctx); err != nil {
 			return nil, fmt.Errorf("switch branch: %w", err)
 		}
 	}
-	return s.issueTokens(ctx, u, t, b, m.RoleID)
+	if tokenHash != "" {
+		if _, err := s.entClient.DeviceToken.Update().
+			Where(devicetoken.TokenHash(tokenHash), devicetoken.RevokedAtIsNil()).
+			SetBranchID(branchID).
+			Save(ctx); err != nil {
+			return nil, fmt.Errorf("re-scope device token: %w", err)
+		}
+	}
+	info := toBranchInfo(b)
+	return &info, nil
 }

@@ -3,13 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	iauth "github.com/msrsiddik/apicorex-identity/internal/auth"
@@ -19,6 +17,9 @@ import (
 	itenant "github.com/msrsiddik/apicorex-identity/internal/tenant"
 	"github.com/msrsiddik/apicorex-identity/internal/testutil"
 )
+
+// testPluginKey guards /internal/introspect in these tests.
+const testPluginKey = "test-plugin-key"
 
 type noopInstaller struct{}
 
@@ -40,11 +41,10 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	t.Helper()
 	pg := testutil.NewPostgres(t)
 
-	issuer := iauth.NewIssuer("test-secret", 15*time.Minute)
-	authSvc := iauth.NewService(pg.EntClient, pg.DB, issuer, nil, pg.RBAC)
+	authSvc := iauth.NewService(pg.EntClient, pg.DB, pg.RBAC)
 	saga := itenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 	installer := pluginmgr.NewInstaller(pg.EntClient, migrator.New(pg.EntClient, pg.DB), emptyRegistry{})
-	h := &handlers{authSvc: authSvc, saga: saga, installer: installer}
+	h := &handlers{authSvc: authSvc, saga: saga, installer: installer, pluginKey: testPluginKey}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -52,6 +52,8 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	r.GET("/auth/slug-available", h.slugAvailable)
 	r.GET("/auth/slug-suggest", h.slugSuggest)
 	r.POST("/auth/login", h.login)
+	r.POST("/auth/logout", h.logout)
+	r.POST("/internal/introspect", h.introspect)
 	r.GET("/me", h.me)
 	r.POST("/plugins/install", h.install)
 	r.POST("/plugins/uninstall", h.uninstall)
@@ -189,8 +191,8 @@ func TestHandler_Login(t *testing.T) {
 	}
 	var lr LoginResponse
 	json.Unmarshal(w.Body.Bytes(), &lr)
-	if lr.AccessToken == "" || lr.RefreshToken == "" {
-		t.Error("login should return both tokens")
+	if lr.Token == "" || !strings.HasPrefix(lr.Token, "zdt_") {
+		t.Errorf("login should return an opaque zdt_ device token, got %q", lr.Token)
 	}
 
 	// wrong password → 401
@@ -227,20 +229,23 @@ func TestHandler_LoginMultiTenantChooser(t *testing.T) {
 }
 
 func TestHandler_Me(t *testing.T) {
-	r, _ := newTestRouter(t)
+	r, h := newTestRouter(t)
 	do(t, r, "POST", "/auth/register", RegisterRequest{
 		Slug: "acme", Name: "Acme", Plan: "starter",
 		Email: "owner@acme.com", Password: "secret123",
 		FullName: "Ada", Phone: "+100", JobTitle: "CEO",
 	}, nil)
 
-	// find the user_id to simulate Core's injected headers
-	u, _ := newUserID(t, r)
+	// find the user_id + real tenant_id to simulate Core's injected headers. The
+	// real tenant id matters now: /me re-checks membership, so a fake id would
+	// (correctly) read as "not a member" and 401.
+	u, tok := newUserID(t, r, h)
+	tid := introspectTok(t, h, tok).TenantID
 
 	// /me with Core-injected headers → profile + role + permissions
 	w := do(t, r, "GET", "/me", nil, map[string]string{
 		"X-ApiCoreX-User-ID":     u,
-		"X-ApiCoreX-Tenant-ID":   "t_unused", // installed_plugins query tolerates missing
+		"X-ApiCoreX-Tenant-ID":   tid,
 		"X-ApiCoreX-Schema":      "tenant_acme",
 		"X-ApiCoreX-Roles":       "owner",
 		"X-ApiCoreX-Permissions": "*:*",
@@ -268,55 +273,222 @@ func TestHandler_Me(t *testing.T) {
 	}
 }
 
-// newUserID logs in to discover the owner's user_id from the JWT subject — but
-// simpler: query via a fresh login and decode the token sub. We just re-login.
-func newUserID(t *testing.T, r *gin.Engine) (string, string) {
+// A removed member's JWT stays valid until it expires, but /me must re-check
+// membership and reject once the owner has removed them — this is what lets the
+// device boot a removed staff the next time it comes online.
+func TestHandler_MeRejectsRemovedMember(t *testing.T) {
+	r, h := newTestRouter(t)
+	do(t, r, "POST", "/auth/register", RegisterRequest{
+		Slug: "acme", Name: "Acme", Plan: "starter",
+		Email: "owner@acme.com", Password: "secret123",
+		FullName: "Ada", Phone: "+100", JobTitle: "CEO",
+	}, nil)
+
+	// Owner's identity + real tenant id, to act as Core would.
+	ownerID, ownerTok := newUserID(t, r, h)
+	tenant := introspectTok(t, h, ownerTok).TenantID
+	ownerHeaders := map[string]string{
+		"X-ApiCoreX-User-ID":     ownerID,
+		"X-ApiCoreX-Tenant-ID":   tenant,
+		"X-ApiCoreX-Schema":      "tenant_acme",
+		"X-ApiCoreX-Roles":       "owner",
+		"X-ApiCoreX-Permissions": "*:*",
+		"X-ApiCoreX-User-Type":   "tenant_user",
+	}
+
+	// The owner's default branch (AddMember is branch-scoped).
+	bw := do(t, r, "GET", "/branches", nil, ownerHeaders)
+	if bw.Code != http.StatusOK {
+		t.Fatalf("/branches = %d (%s)", bw.Code, bw.Body)
+	}
+	var branches ListBranchesResponse
+	json.Unmarshal(bw.Body.Bytes(), &branches)
+	if len(branches.Branches) == 0 {
+		t.Fatal("no default branch")
+	}
+	branchID := branches.Branches[0].ID
+
+	// Add a plain member (not a manager, so removal isn't blocked as last-manager).
+	aw := do(t, r, "POST", "/branches/"+branchID+"/members", AddMemberRequest{
+		Email: "bob@acme.com", Password: "secret123", Role: "member",
+		FullName: "Bob", Phone: "+200", JobTitle: "Clerk",
+	}, ownerHeaders)
+	if aw.Code != http.StatusOK {
+		t.Fatalf("addMember = %d (%s)", aw.Code, aw.Body)
+	}
+
+	bobLogin := do(t, r, "POST", "/auth/login", LoginRequest{Slug: "acme", Email: "bob@acme.com", Password: "secret123"}, nil)
+	var blr LoginResponse
+	json.Unmarshal(bobLogin.Body.Bytes(), &blr)
+	bobID := introspectTok(t, h, blr.Token).UserID
+
+	bobHeaders := map[string]string{
+		"X-ApiCoreX-User-ID":     bobID,
+		"X-ApiCoreX-Tenant-ID":   tenant,
+		"X-ApiCoreX-Schema":      "tenant_acme",
+		"X-ApiCoreX-Roles":       "member",
+		"X-ApiCoreX-Permissions": "branch:read",
+		"X-ApiCoreX-User-Type":   "tenant_user",
+	}
+
+	// While a member, /me is OK.
+	if w := do(t, r, "GET", "/me", nil, bobHeaders); w.Code != http.StatusOK {
+		t.Fatalf("/me before removal = %d, want 200 (%s)", w.Code, w.Body)
+	}
+
+	// Owner removes Bob (service call — the DELETE route isn't wired in this test router).
+	if err := h.authSvc.RemoveMember(context.Background(), tenant, bobID); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+
+	// Bob's still-valid token now → 401, membership revoked.
+	w := do(t, r, "GET", "/me", nil, bobHeaders)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("/me after removal = %d, want 401 (%s)", w.Code, w.Body)
+	}
+
+	// His device token must be dead too — introspection rejects it.
+	if _, err := h.authSvc.Introspect(context.Background(), iauth.HashToken(blr.Token), ""); err == nil {
+		t.Error("introspect after removal should fail")
+	}
+
+	// Even if Bob is re-added later, the OLD device token must stay dead —
+	// RemoveMember revoked it, so re-adding doesn't resurrect old grants.
+	aw2 := do(t, r, "POST", "/branches/"+branchID+"/members", AddMemberRequest{
+		Email: "bob@acme.com", Role: "member",
+	}, ownerHeaders)
+	if aw2.Code != http.StatusOK {
+		t.Fatalf("re-addMember = %d (%s)", aw2.Code, aw2.Body)
+	}
+	if _, err := h.authSvc.Introspect(context.Background(), iauth.HashToken(blr.Token), ""); err == nil {
+		t.Error("old device token must stay revoked after re-adding the member")
+	}
+}
+
+// The /internal/introspect endpoint: plugin-key gated, resolves the token owner
+// by default and an acting user when supplied, and 401s for a removed acting user.
+func TestHandler_Introspect(t *testing.T) {
+	r, h := newTestRouter(t)
+	registerAcme(t, r)
+
+	ownerID, ownerTok := newUserID(t, r, h)
+	tenant := introspectTok(t, h, ownerTok).TenantID
+	ownerHeaders := map[string]string{
+		"X-ApiCoreX-User-ID":     ownerID,
+		"X-ApiCoreX-Tenant-ID":   tenant,
+		"X-ApiCoreX-Schema":      "tenant_acme",
+		"X-ApiCoreX-Roles":       "owner",
+		"X-ApiCoreX-Permissions": "*:*",
+		"X-ApiCoreX-User-Type":   "tenant_user",
+	}
+
+	// wrong plugin key → 401
+	w := do(t, r, "POST", "/internal/introspect",
+		IntrospectRequest{TokenHash: iauth.HashToken(ownerTok)},
+		map[string]string{"X-Plugin-Key": "wrong"})
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("introspect with wrong key = %d, want 401 (%s)", w.Code, w.Body)
+	}
+
+	keyHdr := map[string]string{"X-Plugin-Key": testPluginKey}
+
+	// owner default (no acting user) → owner identity with owner perms
+	w = do(t, r, "POST", "/internal/introspect", IntrospectRequest{TokenHash: iauth.HashToken(ownerTok)}, keyHdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("introspect = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	var res iauth.IntrospectResult
+	json.Unmarshal(w.Body.Bytes(), &res)
+	if res.UserID != ownerID || len(res.Permissions) == 0 {
+		t.Errorf("introspect owner = %+v", res)
+	}
+
+	// add a staff member; introspect with acting user → staff identity + member perms
+	bw := do(t, r, "GET", "/branches", nil, ownerHeaders)
+	var branches ListBranchesResponse
+	json.Unmarshal(bw.Body.Bytes(), &branches)
+	do(t, r, "POST", "/branches/"+branches.Branches[0].ID+"/members", AddMemberRequest{
+		Email: "staff@acme.com", Password: "secret123", Role: "member", FullName: "Staff",
+	}, ownerHeaders)
+	staffID := ""
+	members, _ := h.authSvc.ListMembers(context.Background(), tenant)
+	for _, m := range members {
+		if m.Email == "staff@acme.com" {
+			staffID = m.UserID
+		}
+	}
+	w = do(t, r, "POST", "/internal/introspect",
+		IntrospectRequest{TokenHash: iauth.HashToken(ownerTok), ActingUserID: staffID}, keyHdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("introspect acting staff = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	var actingRes iauth.IntrospectResult
+	json.Unmarshal(w.Body.Bytes(), &actingRes)
+	if actingRes.UserID != staffID {
+		t.Errorf("acting user_id = %q, want %q", actingRes.UserID, staffID)
+	}
+	for _, p := range actingRes.Permissions {
+		if p == "*:*" {
+			t.Error("acting staff must NOT inherit the owner's permissions")
+		}
+	}
+
+	// removed acting user → 401 membership revoked (device token itself survives)
+	if err := h.authSvc.RemoveMember(context.Background(), tenant, staffID); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	w = do(t, r, "POST", "/internal/introspect",
+		IntrospectRequest{TokenHash: iauth.HashToken(ownerTok), ActingUserID: staffID}, keyHdr)
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "membership revoked") {
+		t.Errorf("introspect removed acting = %d (%s), want 401 membership revoked", w.Code, w.Body)
+	}
+	// ...but the owner still introspects fine on the same device token.
+	w = do(t, r, "POST", "/internal/introspect", IntrospectRequest{TokenHash: iauth.HashToken(ownerTok)}, keyHdr)
+	if w.Code != http.StatusOK {
+		t.Errorf("owner introspect after staff removal = %d, want 200 (%s)", w.Code, w.Body)
+	}
+}
+
+// Logout revokes exactly the calling device token (identified by the trusted
+// token-hash header Core injects).
+func TestHandler_Logout(t *testing.T) {
+	r, h := newTestRouter(t)
+	registerAcme(t, r)
+	_, tok := newUserID(t, r, h)
+
+	w := do(t, r, "POST", "/auth/logout", nil, map[string]string{
+		plugin.HeaderTokenHash: iauth.HashToken(tok),
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("logout = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	if _, err := h.authSvc.Introspect(context.Background(), iauth.HashToken(tok), ""); err == nil {
+		t.Error("device token should be dead after logout")
+	}
+}
+
+// introspectTok resolves a raw device token as Core would (no acting user) and
+// returns the request identity.
+func introspectTok(t *testing.T, h *handlers, raw string) *iauth.IntrospectResult {
+	t.Helper()
+	res, err := h.authSvc.Introspect(context.Background(), iauth.HashToken(raw), "")
+	if err != nil {
+		t.Fatalf("introspect: %v", err)
+	}
+	return res
+}
+
+// newUserID logs in as the acme owner and returns their user id + raw device token.
+func newUserID(t *testing.T, r *gin.Engine, h *handlers) (string, string) {
 	t.Helper()
 	w := do(t, r, "POST", "/auth/login", LoginRequest{Slug: "acme", Email: "owner@acme.com", Password: "secret123"}, nil)
 	var lr LoginResponse
 	json.Unmarshal(w.Body.Bytes(), &lr)
-	sub := jwtSubject(t, lr.AccessToken)
-	return sub, lr.AccessToken
+	if lr.Token == "" {
+		t.Fatal("login returned no token")
+	}
+	return introspectTok(t, h, lr.Token).UserID, lr.Token
 }
-
-func jwtSubject(t *testing.T, token string) string {
-	t.Helper()
-	sub, _ := decodeSub(token)
-	if sub == "" {
-		t.Fatal("could not decode jwt subject")
-	}
-	return sub
-}
-
-// decodeSub extracts the "sub" claim from a JWT without verifying the signature.
-func decodeSub(token string) (string, error) {
-	parts := splitDots(token)
-	if len(parts) != 3 {
-		return "", errBadToken
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", err
-	}
-	var claims struct {
-		Sub string `json:"sub"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", err
-	}
-	return claims.Sub, nil
-}
-
-func splitDots(s string) []string { return strings.Split(s, ".") }
-
-var errBadToken = errorString("bad token")
-
-type errorString string
-
-func (e errorString) Error() string { return string(e) }
-
-// keep the plugin import used (header helpers are exercised by the real /me handler)
-var _ = plugin.UserID
 
 // Registration without a slug succeeds and returns a generated slug.
 func TestHandler_RegisterAutoSlug(t *testing.T) {
@@ -437,9 +609,9 @@ func ctxHeaders(tenantID, userID, perms string) map[string]string {
 // Defense-in-depth: even if a request reaches the plugin (e.g. a direct call
 // bypassing the gateway), the handler rejects it without the right permission.
 func TestHandler_BranchAuthz(t *testing.T) {
-	r, _ := newTestRouter(t)
+	r, h := newTestRouter(t)
 	registerAcme(t, r)
-	tid := loginTenantID(t, r)
+	tid := loginTenantID(t, r, h)
 
 	// no permissions header → 403
 	w := do(t, r, "POST", "/branches", CreateBranchRequest{Slug: "dhaka", Name: "Dhaka"},
@@ -485,9 +657,9 @@ func TestHandler_BranchAuthz(t *testing.T) {
 
 // Role management requires tenant:manage; lesser permissions are rejected.
 func TestHandler_RoleAuthz(t *testing.T) {
-	r, _ := newTestRouter(t)
+	r, h := newTestRouter(t)
 	registerAcme(t, r)
-	tid := loginTenantID(t, r)
+	tid := loginTenantID(t, r, h)
 
 	body := CreateRoleRequest{Slug: "auditor", Name: "Auditor", Permissions: []string{"user:read"}}
 
@@ -507,9 +679,9 @@ func TestHandler_RoleAuthz(t *testing.T) {
 // Tenant update requires tenant:manage; slug is never changed (the request type
 // has no slug field, and the response keeps the original slug).
 func TestHandler_UpdateTenant(t *testing.T) {
-	r, _ := newTestRouter(t)
+	r, h := newTestRouter(t)
 	registerAcme(t, r)
-	tid := loginTenantID(t, r)
+	tid := loginTenantID(t, r, h)
 
 	// without tenant:manage → 403
 	w := do(t, r, "PATCH", "/tenant", UpdateTenantRequest{Name: "Acme Corporation"},
@@ -537,9 +709,9 @@ func TestHandler_UpdateTenant(t *testing.T) {
 // Platform-admin management endpoints are gated on platform_admin user_type,
 // not any tenant permission — even *:* on the caller's own tenant.
 func TestHandler_PlatformAdminsManage(t *testing.T) {
-	r, _ := newTestRouter(t)
+	r, h := newTestRouter(t)
 	registerAcme(t, r)
-	tid := loginTenantID(t, r)
+	tid := loginTenantID(t, r, h)
 
 	tenantOwnerHeaders := ctxHeaders(tid, "u_x", "*:*")
 	adminHeaders := map[string]string{plugin.HeaderUserType: "platform_admin"}
@@ -591,9 +763,9 @@ func TestHandler_PlatformAdminsManage(t *testing.T) {
 // /plugins/reconcile is platform-admin only, regardless of tenant permissions —
 // it's a cross-tenant operation, not scoped to the caller's own tenant.
 func TestHandler_ReconcilePlatformAdminOnly(t *testing.T) {
-	r, _ := newTestRouter(t)
+	r, h := newTestRouter(t)
 	registerAcme(t, r)
-	tid := loginTenantID(t, r)
+	tid := loginTenantID(t, r, h)
 
 	// a regular user, even an owner with *:* permissions, is not a platform admin
 	w := do(t, r, "POST", "/plugins/reconcile", ReconcilePluginRequest{PluginName: "billing"}, map[string]string{
@@ -615,33 +787,14 @@ func TestHandler_ReconcilePlatformAdminOnly(t *testing.T) {
 	}
 }
 
-// loginTenantID logs in as the acme owner and returns the tenant_id from the token.
-func loginTenantID(t *testing.T, r *gin.Engine) string {
+// loginTenantID logs in as the acme owner and returns the tenant_id via introspection.
+func loginTenantID(t *testing.T, r *gin.Engine, h *handlers) string {
 	t.Helper()
 	w := do(t, r, "POST", "/auth/login", LoginRequest{Slug: "acme", Email: "owner@acme.com", Password: "secret123"}, nil)
 	var lr LoginResponse
 	json.Unmarshal(w.Body.Bytes(), &lr)
-	tid, _ := decodeTenantID(lr.AccessToken)
-	if tid == "" {
-		t.Fatal("could not decode tenant_id from token")
+	if lr.Token == "" {
+		t.Fatal("login returned no token")
 	}
-	return tid
-}
-
-func decodeTenantID(token string) (string, error) {
-	parts := splitDots(token)
-	if len(parts) != 3 {
-		return "", errBadToken
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", err
-	}
-	var claims struct {
-		TenantID string `json:"tenant_id"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", err
-	}
-	return claims.TenantID, nil
+	return introspectTok(t, h, lr.Token).TenantID
 }

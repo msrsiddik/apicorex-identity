@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -68,22 +67,6 @@ func main() {
 	}
 	log.Println("[identity] system roles seeded")
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET is required")
-	}
-	issuer := iauth.NewIssuer(jwtSecret, 15*time.Minute)
-
-	// optional logout denylist (shared with Core via Redis)
-	var denylist *iauth.Denylist
-	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
-		denylist, err = iauth.NewDenylist(redisURL)
-		if err != nil {
-			log.Fatalf("redis denylist: %v", err)
-		}
-		log.Println("[identity] logout denylist enabled (redis)")
-	}
-
 	coreURL := envOr("CORE_URL", "http://localhost:8080")
 	coreRegistry := pluginmgr.NewCoreRegistry(coreURL)
 	mig := migrator.New(entClient, db)
@@ -103,7 +86,7 @@ func main() {
 	}
 
 	saga := itenant.NewSaga(entClient, db, dsn, installer, rbacStore)
-	authSvc := iauth.NewService(entClient, db, issuer, denylist, rbacStore)
+	authSvc := iauth.NewService(entClient, db, rbacStore)
 
 	p := plugin.New(plugin.Config{
 		Name:          "identity",
@@ -113,7 +96,10 @@ func main() {
 		PluginBaseURL: envOr("PLUGIN_BASE_URL", ""),
 		APIKey:        os.Getenv("PLUGIN_API_KEY"),
 	})
-	registerRoutes(p, &handlers{authSvc: authSvc, saga: saga, installer: installer})
+	registerRoutes(p, &handlers{
+		authSvc: authSvc, saga: saga, installer: installer,
+		pluginKey: os.Getenv("PLUGIN_API_KEY"),
+	})
 
 	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

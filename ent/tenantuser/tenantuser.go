@@ -22,6 +22,8 @@ const (
 	FieldBranchID = "branch_id"
 	// FieldRoleID holds the string denoting the role_id field in the database.
 	FieldRoleID = "role_id"
+	// FieldStatus holds the string denoting the status field in the database.
+	FieldStatus = "status"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// EdgeUser holds the string denoting the user edge name in mutations.
@@ -53,6 +55,7 @@ var Columns = []string{
 	FieldTenantID,
 	FieldBranchID,
 	FieldRoleID,
+	FieldStatus,
 	FieldCreatedAt,
 }
 
@@ -67,6 +70,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultStatus holds the default value on creation for the "status" field.
+	DefaultStatus string
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
@@ -97,6 +102,11 @@ func ByBranchID(opts ...sql.OrderTermOption) OrderOption {
 // ByRoleID orders the results by the role_id field.
 func ByRoleID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRoleID, opts...).ToFunc()
+}
+
+// ByStatus orders the results by the status field.
+func ByStatus(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStatus, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.
