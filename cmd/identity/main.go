@@ -46,6 +46,20 @@ func main() {
 	if err := migrateSharedSchema(ctx, db); err != nil {
 		log.Fatalf("ent schema create: %v", err)
 	}
+	// Bring every existing tenant's per-tenant schema up to date (idempotent) —
+	// new registrations migrate at creation, but existing tenants need their
+	// user_profiles ALTERed for newly added columns (e.g. pin_hash).
+	if tenants, err := entClient.Tenant.Query().All(ctx); err == nil {
+		for _, t := range tenants {
+			if t.SchemaName == "" {
+				continue
+			}
+			if err := itenant.MigrateTenantSchema(ctx, db, dsn, t.SchemaName); err != nil {
+				log.Printf("[identity] migrate tenant schema %s: %v", t.SchemaName, err)
+			}
+		}
+		log.Printf("[identity] migrated %d tenant schemas", len(tenants))
+	}
 
 	// seed built-in system roles (idempotent)
 	rbacStore := rbac.NewStore(entClient)

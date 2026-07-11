@@ -33,6 +33,10 @@ func (UserProfile) Fields() []ent.Field {
 		field.String("phone").Optional(),
 		field.String("job_title").Optional(),
 		field.String("system_role").Default("customer"),
+		// Device-unlock PIN (bcrypt hash), so a staff member can be re-provisioned
+		// on any device and an owner can set it centrally. Sensitive: never
+		// serialized back to a client. Empty = no PIN set yet.
+		field.String("pin_hash").Sensitive().Optional().Default(""),
 		field.Time("created_at").Default(time.Now).Immutable(),
 	}
 }

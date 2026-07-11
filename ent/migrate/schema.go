@@ -223,6 +223,7 @@ var (
 		{Name: "phone", Type: field.TypeString, Nullable: true},
 		{Name: "job_title", Type: field.TypeString, Nullable: true},
 		{Name: "system_role", Type: field.TypeString, Default: "customer"},
+		{Name: "pin_hash", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// UserProfilesTable holds the schema information for the "user_profiles" table.

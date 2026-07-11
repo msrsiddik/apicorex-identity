@@ -96,6 +96,26 @@ func (upu *UserProfileUpdate) SetNillableSystemRole(s *string) *UserProfileUpdat
 	return upu
 }
 
+// SetPinHash sets the "pin_hash" field.
+func (upu *UserProfileUpdate) SetPinHash(s string) *UserProfileUpdate {
+	upu.mutation.SetPinHash(s)
+	return upu
+}
+
+// SetNillablePinHash sets the "pin_hash" field if the given value is not nil.
+func (upu *UserProfileUpdate) SetNillablePinHash(s *string) *UserProfileUpdate {
+	if s != nil {
+		upu.SetPinHash(*s)
+	}
+	return upu
+}
+
+// ClearPinHash clears the value of the "pin_hash" field.
+func (upu *UserProfileUpdate) ClearPinHash() *UserProfileUpdate {
+	upu.mutation.ClearPinHash()
+	return upu
+}
+
 // Mutation returns the UserProfileMutation object of the builder.
 func (upu *UserProfileUpdate) Mutation() *UserProfileMutation {
 	return upu.mutation
@@ -154,6 +174,12 @@ func (upu *UserProfileUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := upu.mutation.SystemRole(); ok {
 		_spec.SetField(userprofile.FieldSystemRole, field.TypeString, value)
+	}
+	if value, ok := upu.mutation.PinHash(); ok {
+		_spec.SetField(userprofile.FieldPinHash, field.TypeString, value)
+	}
+	if upu.mutation.PinHashCleared() {
+		_spec.ClearField(userprofile.FieldPinHash, field.TypeString)
 	}
 	_spec.Node.Schema = upu.schemaConfig.UserProfile
 	ctx = internal.NewSchemaConfigContext(ctx, upu.schemaConfig)
@@ -245,6 +271,26 @@ func (upuo *UserProfileUpdateOne) SetNillableSystemRole(s *string) *UserProfileU
 	return upuo
 }
 
+// SetPinHash sets the "pin_hash" field.
+func (upuo *UserProfileUpdateOne) SetPinHash(s string) *UserProfileUpdateOne {
+	upuo.mutation.SetPinHash(s)
+	return upuo
+}
+
+// SetNillablePinHash sets the "pin_hash" field if the given value is not nil.
+func (upuo *UserProfileUpdateOne) SetNillablePinHash(s *string) *UserProfileUpdateOne {
+	if s != nil {
+		upuo.SetPinHash(*s)
+	}
+	return upuo
+}
+
+// ClearPinHash clears the value of the "pin_hash" field.
+func (upuo *UserProfileUpdateOne) ClearPinHash() *UserProfileUpdateOne {
+	upuo.mutation.ClearPinHash()
+	return upuo
+}
+
 // Mutation returns the UserProfileMutation object of the builder.
 func (upuo *UserProfileUpdateOne) Mutation() *UserProfileMutation {
 	return upuo.mutation
@@ -333,6 +379,12 @@ func (upuo *UserProfileUpdateOne) sqlSave(ctx context.Context) (_node *UserProfi
 	}
 	if value, ok := upuo.mutation.SystemRole(); ok {
 		_spec.SetField(userprofile.FieldSystemRole, field.TypeString, value)
+	}
+	if value, ok := upuo.mutation.PinHash(); ok {
+		_spec.SetField(userprofile.FieldPinHash, field.TypeString, value)
+	}
+	if upuo.mutation.PinHashCleared() {
+		_spec.ClearField(userprofile.FieldPinHash, field.TypeString)
 	}
 	_spec.Node.Schema = upuo.schemaConfig.UserProfile
 	ctx = internal.NewSchemaConfigContext(ctx, upuo.schemaConfig)

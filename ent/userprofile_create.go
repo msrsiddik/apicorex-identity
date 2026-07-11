@@ -68,6 +68,20 @@ func (upc *UserProfileCreate) SetNillableSystemRole(s *string) *UserProfileCreat
 	return upc
 }
 
+// SetPinHash sets the "pin_hash" field.
+func (upc *UserProfileCreate) SetPinHash(s string) *UserProfileCreate {
+	upc.mutation.SetPinHash(s)
+	return upc
+}
+
+// SetNillablePinHash sets the "pin_hash" field if the given value is not nil.
+func (upc *UserProfileCreate) SetNillablePinHash(s *string) *UserProfileCreate {
+	if s != nil {
+		upc.SetPinHash(*s)
+	}
+	return upc
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (upc *UserProfileCreate) SetCreatedAt(t time.Time) *UserProfileCreate {
 	upc.mutation.SetCreatedAt(t)
@@ -126,6 +140,10 @@ func (upc *UserProfileCreate) defaults() {
 	if _, ok := upc.mutation.SystemRole(); !ok {
 		v := userprofile.DefaultSystemRole
 		upc.mutation.SetSystemRole(v)
+	}
+	if _, ok := upc.mutation.PinHash(); !ok {
+		v := userprofile.DefaultPinHash
+		upc.mutation.SetPinHash(v)
 	}
 	if _, ok := upc.mutation.CreatedAt(); !ok {
 		v := userprofile.DefaultCreatedAt()
@@ -195,6 +213,10 @@ func (upc *UserProfileCreate) createSpec() (*UserProfile, *sqlgraph.CreateSpec) 
 	if value, ok := upc.mutation.SystemRole(); ok {
 		_spec.SetField(userprofile.FieldSystemRole, field.TypeString, value)
 		_node.SystemRole = value
+	}
+	if value, ok := upc.mutation.PinHash(); ok {
+		_spec.SetField(userprofile.FieldPinHash, field.TypeString, value)
+		_node.PinHash = value
 	}
 	if value, ok := upc.mutation.CreatedAt(); ok {
 		_spec.SetField(userprofile.FieldCreatedAt, field.TypeTime, value)

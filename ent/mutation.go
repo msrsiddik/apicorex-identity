@@ -5615,6 +5615,7 @@ type UserProfileMutation struct {
 	phone         *string
 	job_title     *string
 	system_role   *string
+	pin_hash      *string
 	created_at    *time.Time
 	clearedFields map[string]struct{}
 	done          bool
@@ -5896,6 +5897,55 @@ func (m *UserProfileMutation) ResetSystemRole() {
 	m.system_role = nil
 }
 
+// SetPinHash sets the "pin_hash" field.
+func (m *UserProfileMutation) SetPinHash(s string) {
+	m.pin_hash = &s
+}
+
+// PinHash returns the value of the "pin_hash" field in the mutation.
+func (m *UserProfileMutation) PinHash() (r string, exists bool) {
+	v := m.pin_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPinHash returns the old "pin_hash" field's value of the UserProfile entity.
+// If the UserProfile object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserProfileMutation) OldPinHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPinHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPinHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPinHash: %w", err)
+	}
+	return oldValue.PinHash, nil
+}
+
+// ClearPinHash clears the value of the "pin_hash" field.
+func (m *UserProfileMutation) ClearPinHash() {
+	m.pin_hash = nil
+	m.clearedFields[userprofile.FieldPinHash] = struct{}{}
+}
+
+// PinHashCleared returns if the "pin_hash" field was cleared in this mutation.
+func (m *UserProfileMutation) PinHashCleared() bool {
+	_, ok := m.clearedFields[userprofile.FieldPinHash]
+	return ok
+}
+
+// ResetPinHash resets all changes to the "pin_hash" field.
+func (m *UserProfileMutation) ResetPinHash() {
+	m.pin_hash = nil
+	delete(m.clearedFields, userprofile.FieldPinHash)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *UserProfileMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -5966,7 +6016,7 @@ func (m *UserProfileMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserProfileMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.full_name != nil {
 		fields = append(fields, userprofile.FieldFullName)
 	}
@@ -5978,6 +6028,9 @@ func (m *UserProfileMutation) Fields() []string {
 	}
 	if m.system_role != nil {
 		fields = append(fields, userprofile.FieldSystemRole)
+	}
+	if m.pin_hash != nil {
+		fields = append(fields, userprofile.FieldPinHash)
 	}
 	if m.created_at != nil {
 		fields = append(fields, userprofile.FieldCreatedAt)
@@ -5998,6 +6051,8 @@ func (m *UserProfileMutation) Field(name string) (ent.Value, bool) {
 		return m.JobTitle()
 	case userprofile.FieldSystemRole:
 		return m.SystemRole()
+	case userprofile.FieldPinHash:
+		return m.PinHash()
 	case userprofile.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -6017,6 +6072,8 @@ func (m *UserProfileMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldJobTitle(ctx)
 	case userprofile.FieldSystemRole:
 		return m.OldSystemRole(ctx)
+	case userprofile.FieldPinHash:
+		return m.OldPinHash(ctx)
 	case userprofile.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	}
@@ -6055,6 +6112,13 @@ func (m *UserProfileMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSystemRole(v)
+		return nil
+	case userprofile.FieldPinHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPinHash(v)
 		return nil
 	case userprofile.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -6099,6 +6163,9 @@ func (m *UserProfileMutation) ClearedFields() []string {
 	if m.FieldCleared(userprofile.FieldJobTitle) {
 		fields = append(fields, userprofile.FieldJobTitle)
 	}
+	if m.FieldCleared(userprofile.FieldPinHash) {
+		fields = append(fields, userprofile.FieldPinHash)
+	}
 	return fields
 }
 
@@ -6119,6 +6186,9 @@ func (m *UserProfileMutation) ClearField(name string) error {
 	case userprofile.FieldJobTitle:
 		m.ClearJobTitle()
 		return nil
+	case userprofile.FieldPinHash:
+		m.ClearPinHash()
+		return nil
 	}
 	return fmt.Errorf("unknown UserProfile nullable field %s", name)
 }
@@ -6138,6 +6208,9 @@ func (m *UserProfileMutation) ResetField(name string) error {
 		return nil
 	case userprofile.FieldSystemRole:
 		m.ResetSystemRole()
+		return nil
+	case userprofile.FieldPinHash:
+		m.ResetPinHash()
 		return nil
 	case userprofile.FieldCreatedAt:
 		m.ResetCreatedAt()

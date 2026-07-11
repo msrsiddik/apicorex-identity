@@ -21,6 +21,8 @@ const (
 	FieldJobTitle = "job_title"
 	// FieldSystemRole holds the string denoting the system_role field in the database.
 	FieldSystemRole = "system_role"
+	// FieldPinHash holds the string denoting the pin_hash field in the database.
+	FieldPinHash = "pin_hash"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the userprofile in the database.
@@ -34,6 +36,7 @@ var Columns = []string{
 	FieldPhone,
 	FieldJobTitle,
 	FieldSystemRole,
+	FieldPinHash,
 	FieldCreatedAt,
 }
 
@@ -50,6 +53,8 @@ func ValidColumn(column string) bool {
 var (
 	// DefaultSystemRole holds the default value on creation for the "system_role" field.
 	DefaultSystemRole string
+	// DefaultPinHash holds the default value on creation for the "pin_hash" field.
+	DefaultPinHash string
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
@@ -80,6 +85,11 @@ func ByJobTitle(opts ...sql.OrderTermOption) OrderOption {
 // BySystemRole orders the results by the system_role field.
 func BySystemRole(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSystemRole, opts...).ToFunc()
+}
+
+// ByPinHash orders the results by the pin_hash field.
+func ByPinHash(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPinHash, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

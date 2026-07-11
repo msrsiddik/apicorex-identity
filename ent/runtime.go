@@ -107,8 +107,12 @@ func init() {
 	userprofileDescSystemRole := userprofileFields[4].Descriptor()
 	// userprofile.DefaultSystemRole holds the default value on creation for the system_role field.
 	userprofile.DefaultSystemRole = userprofileDescSystemRole.Default.(string)
+	// userprofileDescPinHash is the schema descriptor for pin_hash field.
+	userprofileDescPinHash := userprofileFields[5].Descriptor()
+	// userprofile.DefaultPinHash holds the default value on creation for the pin_hash field.
+	userprofile.DefaultPinHash = userprofileDescPinHash.Default.(string)
 	// userprofileDescCreatedAt is the schema descriptor for created_at field.
-	userprofileDescCreatedAt := userprofileFields[5].Descriptor()
+	userprofileDescCreatedAt := userprofileFields[6].Descriptor()
 	// userprofile.DefaultCreatedAt holds the default value on creation for the created_at field.
 	userprofile.DefaultCreatedAt = userprofileDescCreatedAt.Default.(func() time.Time)
 }

@@ -271,6 +271,106 @@ func TestRBAC_CrossTenantIsolation(t *testing.T) {
 	if err := svc.DeleteRole(ctx, alpha, betaRole.ID); err == nil {
 		t.Error("alpha deleting beta's role should fail")
 	}
+
+	// beta adds a member; alpha's member list must never reveal them (the
+	// TenantUser table is shared, so this proves the tenant_id filter holds).
+	if err := svc.AddMember(ctx, beta, betaBranches[0].ID, auth.AddMemberInput{
+		Email: "staff@beta.com", Role: "member", Password: "secret123", FullName: "Beta Staff",
+	}); err != nil {
+		t.Fatalf("beta add member: %v", err)
+	}
+	alphaMembers, err := svc.ListMembers(ctx, alpha)
+	if err != nil {
+		t.Fatalf("alpha list members: %v", err)
+	}
+	for _, m := range alphaMembers {
+		if m.Email == "staff@beta.com" || m.Email == "owner@beta.com" {
+			t.Fatalf("alpha can see beta's member %q — tenant isolation broken", m.Email)
+		}
+	}
+	// alpha sees exactly its own one member (the owner)
+	if len(alphaMembers) != 1 || alphaMembers[0].Email != "owner@alpha.com" {
+		t.Fatalf("alpha member list wrong: %+v", alphaMembers)
+	}
+
+	// beta sees its own two (owner + new staff), none of alpha's
+	betaMembers, err := svc.ListMembers(ctx, beta)
+	if err != nil {
+		t.Fatalf("beta list members: %v", err)
+	}
+	if len(betaMembers) != 2 {
+		t.Fatalf("expected beta to have 2 members, got %+v", betaMembers)
+	}
+	var betaStaffID string
+	for _, m := range betaMembers {
+		if m.Email == "owner@alpha.com" {
+			t.Fatal("beta can see alpha's owner — tenant isolation broken")
+		}
+		if m.Email == "staff@beta.com" {
+			betaStaffID = m.UserID
+		}
+	}
+
+	// alpha cannot change or remove beta's member (userID from another tenant
+	// resolves to nothing under alpha's tenant scope)
+	if err := svc.UpdateMemberRole(ctx, alpha, betaStaffID, "admin"); err == nil {
+		t.Error("alpha updating beta's member role should fail")
+	}
+	if err := svc.RemoveMember(ctx, alpha, betaStaffID); err == nil {
+		t.Error("alpha removing beta's member should fail")
+	}
+	// and beta's member is untouched
+	stillThere, _ := svc.ListMembers(ctx, beta)
+	if len(stillThere) != 2 {
+		t.Fatalf("beta member count changed after alpha's failed ops: %+v", stillThere)
+	}
+}
+
+// The tenant must always keep at least one member who can manage it: demoting or
+// removing the last manager is refused, but a manager with a peer can be changed.
+func TestMember_LastManagerGuard(t *testing.T) {
+	ctx := context.Background()
+	pg := testutil.NewPostgres(t)
+	registerTenant(t, pg, "acme", "owner@acme.com")
+	svc := auth.NewService(pg.EntClient, pg.DB, auth.NewIssuer("test-secret", 15*time.Minute), nil, pg.RBAC)
+
+	tenantID := decodeClaims(t, mustLogin(t, svc, "acme", "owner@acme.com").AccessToken).TenantID
+	branches, _ := svc.ListBranches(ctx, tenantID)
+	ownerID := decodeClaims(t, mustLogin(t, svc, "acme", "owner@acme.com").AccessToken).Subject
+
+	// sole owner (a manager) — can't be demoted or removed
+	if err := svc.UpdateMemberRole(ctx, tenantID, ownerID, "member"); err != auth.ErrLastManager {
+		t.Fatalf("demoting the last manager should fail with ErrLastManager, got %v", err)
+	}
+	if err := svc.RemoveMember(ctx, tenantID, ownerID); err != auth.ErrLastManager {
+		t.Fatalf("removing the last manager should fail with ErrLastManager, got %v", err)
+	}
+
+	// add a second admin (also a manager); now the owner has a peer
+	if err := svc.AddMember(ctx, tenantID, branches[0].ID, auth.AddMemberInput{
+		Email: "admin@acme.com", Role: "admin", Password: "secret123", FullName: "Admin",
+	}); err != nil {
+		t.Fatalf("add admin: %v", err)
+	}
+	// now the owner CAN be demoted (a manager peer remains)
+	if err := svc.UpdateMemberRole(ctx, tenantID, ownerID, "member"); err != nil {
+		t.Fatalf("demoting owner with a peer manager should succeed, got %v", err)
+	}
+	// but the admin is now the last manager — can't be removed
+	adminID := ""
+	members, _ := svc.ListMembers(ctx, tenantID)
+	for _, m := range members {
+		if m.Email == "admin@acme.com" {
+			adminID = m.UserID
+		}
+	}
+	if err := svc.RemoveMember(ctx, tenantID, adminID); err != auth.ErrLastManager {
+		t.Fatalf("removing the now-last manager should fail, got %v", err)
+	}
+	// the demoted member (no manage perm) can be removed freely
+	if err := svc.RemoveMember(ctx, tenantID, ownerID); err != nil {
+		t.Fatalf("removing a non-manager member should succeed, got %v", err)
+	}
 }
 
 // AddMember rejects an unknown role slug rather than silently defaulting.

@@ -84,6 +84,11 @@ func SystemRole(v string) predicate.UserProfile {
 	return predicate.UserProfile(sql.FieldEQ(FieldSystemRole, v))
 }
 
+// PinHash applies equality check predicate on the "pin_hash" field. It's identical to PinHashEQ.
+func PinHash(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldEQ(FieldPinHash, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.UserProfile {
 	return predicate.UserProfile(sql.FieldEQ(FieldCreatedAt, v))
@@ -367,6 +372,81 @@ func SystemRoleEqualFold(v string) predicate.UserProfile {
 // SystemRoleContainsFold applies the ContainsFold predicate on the "system_role" field.
 func SystemRoleContainsFold(v string) predicate.UserProfile {
 	return predicate.UserProfile(sql.FieldContainsFold(FieldSystemRole, v))
+}
+
+// PinHashEQ applies the EQ predicate on the "pin_hash" field.
+func PinHashEQ(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldEQ(FieldPinHash, v))
+}
+
+// PinHashNEQ applies the NEQ predicate on the "pin_hash" field.
+func PinHashNEQ(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldNEQ(FieldPinHash, v))
+}
+
+// PinHashIn applies the In predicate on the "pin_hash" field.
+func PinHashIn(vs ...string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldIn(FieldPinHash, vs...))
+}
+
+// PinHashNotIn applies the NotIn predicate on the "pin_hash" field.
+func PinHashNotIn(vs ...string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldNotIn(FieldPinHash, vs...))
+}
+
+// PinHashGT applies the GT predicate on the "pin_hash" field.
+func PinHashGT(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldGT(FieldPinHash, v))
+}
+
+// PinHashGTE applies the GTE predicate on the "pin_hash" field.
+func PinHashGTE(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldGTE(FieldPinHash, v))
+}
+
+// PinHashLT applies the LT predicate on the "pin_hash" field.
+func PinHashLT(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldLT(FieldPinHash, v))
+}
+
+// PinHashLTE applies the LTE predicate on the "pin_hash" field.
+func PinHashLTE(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldLTE(FieldPinHash, v))
+}
+
+// PinHashContains applies the Contains predicate on the "pin_hash" field.
+func PinHashContains(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldContains(FieldPinHash, v))
+}
+
+// PinHashHasPrefix applies the HasPrefix predicate on the "pin_hash" field.
+func PinHashHasPrefix(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldHasPrefix(FieldPinHash, v))
+}
+
+// PinHashHasSuffix applies the HasSuffix predicate on the "pin_hash" field.
+func PinHashHasSuffix(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldHasSuffix(FieldPinHash, v))
+}
+
+// PinHashIsNil applies the IsNil predicate on the "pin_hash" field.
+func PinHashIsNil() predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldIsNull(FieldPinHash))
+}
+
+// PinHashNotNil applies the NotNil predicate on the "pin_hash" field.
+func PinHashNotNil() predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldNotNull(FieldPinHash))
+}
+
+// PinHashEqualFold applies the EqualFold predicate on the "pin_hash" field.
+func PinHashEqualFold(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldEqualFold(FieldPinHash, v))
+}
+
+// PinHashContainsFold applies the ContainsFold predicate on the "pin_hash" field.
+func PinHashContainsFold(v string) predicate.UserProfile {
+	return predicate.UserProfile(sql.FieldContainsFold(FieldPinHash, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

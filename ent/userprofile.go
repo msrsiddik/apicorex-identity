@@ -25,6 +25,8 @@ type UserProfile struct {
 	JobTitle string `json:"job_title,omitempty"`
 	// SystemRole holds the value of the "system_role" field.
 	SystemRole string `json:"system_role,omitempty"`
+	// PinHash holds the value of the "pin_hash" field.
+	PinHash string `json:"-"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
@@ -35,7 +37,7 @@ func (*UserProfile) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case userprofile.FieldID, userprofile.FieldFullName, userprofile.FieldPhone, userprofile.FieldJobTitle, userprofile.FieldSystemRole:
+		case userprofile.FieldID, userprofile.FieldFullName, userprofile.FieldPhone, userprofile.FieldJobTitle, userprofile.FieldSystemRole, userprofile.FieldPinHash:
 			values[i] = new(sql.NullString)
 		case userprofile.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -83,6 +85,12 @@ func (up *UserProfile) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field system_role", values[i])
 			} else if value.Valid {
 				up.SystemRole = value.String
+			}
+		case userprofile.FieldPinHash:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field pin_hash", values[i])
+			} else if value.Valid {
+				up.PinHash = value.String
 			}
 		case userprofile.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -137,6 +145,8 @@ func (up *UserProfile) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("system_role=")
 	builder.WriteString(up.SystemRole)
+	builder.WriteString(", ")
+	builder.WriteString("pin_hash=<sensitive>")
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(up.CreatedAt.Format(time.ANSIC))

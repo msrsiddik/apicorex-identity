@@ -295,6 +295,10 @@ type Profile struct {
 	Phone      string
 	JobTitle   string
 	SystemRole string
+	// PinHash is the bcrypt hash of the device-unlock PIN (empty = none set).
+	// Only ever returned to the user themselves (via /me) so their device can
+	// cache it for offline unlock — never to other members.
+	PinHash string
 }
 
 // LoadProfile reads a user's PII profile from the tenant schema's user_profiles.
@@ -310,6 +314,7 @@ func (s *Service) LoadProfile(ctx context.Context, schemaName, userID string) (*
 		Phone:      p.Phone,
 		JobTitle:   p.JobTitle,
 		SystemRole: p.SystemRole,
+		PinHash:    p.PinHash,
 	}, nil
 }
 

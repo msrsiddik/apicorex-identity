@@ -114,6 +114,11 @@ type MeResponse struct {
 	FullName         string   `json:"full_name,omitempty"`
 	Phone            string   `json:"phone,omitempty"`
 	JobTitle         string   `json:"job_title,omitempty"`
+	// Device-unlock PIN: has_pin says whether one is set; pin_hash is the caller's
+	// OWN bcrypt hash, returned so their device can verify the PIN offline. Only
+	// ever the caller's own hash — never another member's.
+	HasPin           bool     `json:"has_pin"`
+	PinHash          string   `json:"pin_hash,omitempty"`
 	InstalledPlugins []string `json:"installed_plugins"`
 }
 
@@ -224,8 +229,36 @@ type ListRolesResponse struct {
 	Roles []auth.RoleInfo `json:"roles"`
 }
 
+type ListMembersResponse struct {
+	Members []auth.MemberInfo `json:"members"`
+}
+
+type UpdateMemberRoleRequest struct {
+	Role string `json:"role" example:"admin"`
+}
+
+type SetPinRequest struct {
+	Pin string `json:"pin" example:"1234"` // 4 digits; empty clears the PIN
+}
+
+type VerifyPinResponse struct {
+	Ok bool `json:"ok"`
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+type SetPasswordRequest struct {
+	NewPassword string `json:"new_password"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
+	// Optional machine-readable code so clients can branch on a specific refusal
+	// (e.g. "last_manager") instead of matching on the human message.
+	Code string `json:"code,omitempty"`
 }
 
 // handlers holds dependencies for the Gin route handlers.
@@ -410,6 +443,60 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Response(http.StatusOK, new(LoginResponse)),
 		option.Response(http.StatusForbidden, new(ErrorResponse)),
 	)
+	p.GET("/members", h.listMembers,
+		option.Summary("List the tenant's members"),
+		option.Description("Every user with access to the caller's tenant — email, name, role, and current branch. Scoped to the caller's tenant."),
+		option.Tags("members"),
+		option.Response(http.StatusOK, new(ListMembersResponse)),
+	)
+	p.Handle(http.MethodPatch, "/members/:userId", h.updateMemberRole,
+		option.Summary("Change a member's role"),
+		option.Description("Owner/admin only. Refused when it would demote the tenant's last manager."),
+		option.Tags("members"),
+		option.Request(new(UpdateMemberRoleRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodDelete, "/members/:userId", h.removeMember,
+		option.Summary("Remove a member from the tenant"),
+		option.Description("Owner/admin only. Deletes the membership and tenant profile; the global user survives. Refused for yourself or the last manager."),
+		option.Tags("members"),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPatch, "/me/pin", h.setOwnPin,
+		option.Summary("Set your own device-unlock PIN"),
+		option.Description("Any signed-in user. Stores a bcrypt hash; /me returns it so the device can unlock offline. Empty pin clears it."),
+		option.Tags("members"),
+		option.Request(new(SetPinRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPatch, "/members/:userId/pin", h.setMemberPin,
+		option.Summary("Set a member's device-unlock PIN"),
+		option.Description("Owner/admin only. Lets an owner provision a staff member's PIN centrally."),
+		option.Tags("members"),
+		option.Request(new(SetPinRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPost, "/me/pin/verify", h.verifyOwnPin,
+		option.Summary("Verify your PIN against the stored hash"),
+		option.Description("Any signed-in user. Used to activate a PIN (set by you elsewhere, or by an owner) on a new device before caching it for offline unlock."),
+		option.Tags("members"),
+		option.Request(new(SetPinRequest)),
+		option.Response(http.StatusOK, new(VerifyPinResponse)),
+	)
+	p.Handle(http.MethodPatch, "/me/password", h.changeOwnPassword,
+		option.Summary("Change your own password"),
+		option.Description("Any signed-in user, after proving the current password."),
+		option.Tags("members"),
+		option.Request(new(ChangePasswordRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPatch, "/members/:userId/password", h.setMemberPassword,
+		option.Summary("Reset a member's password"),
+		option.Description("Owner/admin only. Sets a new password for a staff member without the old one."),
+		option.Tags("members"),
+		option.Request(new(SetPasswordRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
 	p.GET("/roles", h.listRoles,
 		option.Summary("List roles (system + tenant custom)"),
 		option.Tags("roles"),
@@ -456,6 +543,12 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.RequirePermission(http.MethodPost, "/branches", rbac.PermBranchWrite)
 	p.RequirePermission(http.MethodPatch, "/branches/:id", rbac.PermBranchManage)
 	p.RequirePermission(http.MethodPost, "/branches/:id/members", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodGet, "/members", rbac.PermUserRead)
+	p.RequirePermission(http.MethodPatch, "/members/:userId", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodDelete, "/members/:userId", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodPatch, "/members/:userId/pin", rbac.PermUserInvite)
+	p.RequirePermission(http.MethodPatch, "/members/:userId/password", rbac.PermUserInvite)
+	// /me/pin and /me/password act on the caller's own profile — no permission required.
 	p.RequirePermission(http.MethodPost, "/plugins/install", rbac.PermPluginInstall)
 	p.RequirePermission(http.MethodPost, "/plugins/uninstall", rbac.PermPluginUninstall)
 	p.RequirePermission(http.MethodGet, "/roles", rbac.PermTenantManage)
@@ -640,6 +733,8 @@ func (h *handlers) me(c *gin.Context) {
 			resp.FullName = p.FullName
 			resp.Phone = p.Phone
 			resp.JobTitle = p.JobTitle
+			resp.HasPin = p.PinHash != ""
+			resp.PinHash = p.PinHash // caller's own hash, for offline unlock
 		}
 	}
 	c.JSON(http.StatusOK, resp)
@@ -931,6 +1026,194 @@ func (h *handlers) switchBranch(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, LoginResponse{AccessToken: res.AccessToken, RefreshToken: res.RefreshToken})
+}
+
+func (h *handlers) listMembers(c *gin.Context) {
+	// tenantID comes only from the gateway-verified header, never the request —
+	// it is the sole thing keeping one tenant's members out of another's list.
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserRead) {
+		return
+	}
+	members, err := h.authSvc.ListMembers(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListMembersResponse{Members: members})
+}
+
+func (h *handlers) updateMemberRole(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserInvite) {
+		return
+	}
+	var in UpdateMemberRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	err := h.authSvc.UpdateMemberRole(c.Request.Context(), tenantID, c.Param("userId"), in.Role)
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrLastManager):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "cannot demote the tenant's last manager", Code: "last_manager"})
+	case err != nil:
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "role updated"})
+	}
+}
+
+func (h *handlers) removeMember(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserInvite) {
+		return
+	}
+	// Guard against locking yourself out: you can't remove your own membership.
+	if c.Param("userId") == plugin.UserID(c) {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "you cannot remove yourself", Code: "self_remove"})
+		return
+	}
+	err := h.authSvc.RemoveMember(c.Request.Context(), tenantID, c.Param("userId"))
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrLastManager):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "cannot remove the tenant's last manager", Code: "last_manager"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "member removed"})
+	}
+}
+
+func (h *handlers) setOwnPin(c *gin.Context) {
+	tenantID, userID := plugin.TenantID(c), plugin.UserID(c)
+	if tenantID == "" || userID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in SetPinRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	switch err := h.authSvc.SetOwnPin(c.Request.Context(), tenantID, userID, in.Pin); {
+	case errors.Is(err, auth.ErrInvalidPin):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "pin must be 4 digits", Code: "invalid_pin"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "pin set"})
+	}
+}
+
+func (h *handlers) verifyOwnPin(c *gin.Context) {
+	tenantID, userID := plugin.TenantID(c), plugin.UserID(c)
+	if tenantID == "" || userID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in SetPinRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	ok, err := h.authSvc.VerifyOwnPin(c.Request.Context(), tenantID, userID, in.Pin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, VerifyPinResponse{Ok: ok})
+}
+
+func (h *handlers) setMemberPin(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserInvite) {
+		return
+	}
+	var in SetPinRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	switch err := h.authSvc.SetMemberPin(c.Request.Context(), tenantID, c.Param("userId"), in.Pin); {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrInvalidPin):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "pin must be 4 digits", Code: "invalid_pin"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "pin set"})
+	}
+}
+
+func (h *handlers) changeOwnPassword(c *gin.Context) {
+	userID := plugin.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	var in ChangePasswordRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	switch err := h.authSvc.ChangeOwnPassword(c.Request.Context(), userID, in.CurrentPassword, in.NewPassword); {
+	case errors.Is(err, auth.ErrWrongPassword):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "current password is wrong", Code: "wrong_password"})
+	case errors.Is(err, auth.ErrWeakPassword):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "password too short", Code: "weak_password"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "password changed"})
+	}
+}
+
+func (h *handlers) setMemberPassword(c *gin.Context) {
+	tenantID := plugin.TenantID(c)
+	if tenantID == "" {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+	if !requirePerm(c, rbac.PermUserInvite) {
+		return
+	}
+	var in SetPasswordRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	switch err := h.authSvc.SetMemberPassword(c.Request.Context(), tenantID, c.Param("userId"), in.NewPassword); {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrWeakPassword):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "password too short", Code: "weak_password"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "password reset"})
+	}
 }
 
 func (h *handlers) listRoles(c *gin.Context) {
