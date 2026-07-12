@@ -1,7 +1,7 @@
 # Standalone compose for the Identity plugin.
 #
 # Connects to the SHARED Postgres run from the apicorex (Core) repo's
-# docker-compose.yml, exposed on the host at 55432. Start that stack first:
+# docker-compose.yml, exposed on the host at 15432. Start that stack first:
 #
 #   cd ../apicorex && docker compose up -d postgres
 #   docker compose up --build
@@ -14,7 +14,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://apicorex:apicorex@host.docker.internal:55432/apicorex?sslmode=disable
+      DATABASE_URL: postgres://apicorex:apicorex@host.docker.internal:15432/apicorex?sslmode=disable
       JWT_SECRET: change-me-to-a-long-random-secret
       PLUGIN_API_KEY: change-me-plugin-key
       # Core's URL. When Core also runs in Docker, attach both to the same
