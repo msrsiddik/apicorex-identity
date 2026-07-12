@@ -12,13 +12,14 @@
 services:
   identity:
     build: .
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://apicorex:apicorex@host.docker.internal:55432/apicorex?sslmode=disable
       JWT_SECRET: change-me-to-a-long-random-secret
       PLUGIN_API_KEY: change-me-plugin-key
       # Core's URL. When Core also runs in Docker, attach both to the same
-      # network and use the Core service name, e.g. http://core:8080.
-      CORE_URL: http://host.docker.internal:8080
+      # network and use the Core service name, e.g. http://core:9999.
+      CORE_URL: http://host.docker.internal:9999
       PLUGIN_ADDR: ":50051"
       # URL Core uses to reach this plugin. Must be resolvable from Core.
       PLUGIN_BASE_URL: http://identity:50051
