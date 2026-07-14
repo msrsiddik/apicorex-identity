@@ -24,6 +24,11 @@ const (
 
 	PermTenantManage = "tenant:manage"
 
+	// PermSaleVoid lets a user cancel (void) a recorded POS sale, which reverses
+	// its stock and credit side effects. Given to managers and up, not plain
+	// members — an ordinary staffer shouldn't be able to unwind settled bills.
+	PermSaleVoid = "sale:void"
+
 	// PermAll grants everything (owner).
 	PermAll = "*:*"
 )
@@ -65,10 +70,10 @@ type SystemRole struct {
 var SystemRoles = []SystemRole{
 	{Slug: "owner", Name: "Owner", Permissions: []string{PermAll}},
 	{Slug: "admin", Name: "Admin", Permissions: []string{
-		"user:*", "branch:*", "plugin:*", PermBillingView,
+		"user:*", "branch:*", "plugin:*", PermBillingView, PermSaleVoid,
 	}},
 	{Slug: "manager", Name: "Manager", Permissions: []string{
-		PermUserRead, PermUserInvite, PermBranchRead, PermBranchWrite,
+		PermUserRead, PermUserInvite, PermBranchRead, PermBranchWrite, PermSaleVoid,
 	}},
 	{Slug: "member", Name: "Member", Permissions: []string{
 		PermUserRead, PermBranchRead,
