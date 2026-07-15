@@ -29,6 +29,12 @@ const (
 	// members — an ordinary staffer shouldn't be able to unwind settled bills.
 	PermSaleVoid = "sale:void"
 
+	// PermSaleRefund lets a user record a (partial or full) return against a
+	// recorded POS sale — returning stock and refunding money (cash back or a
+	// due adjustment). Like void, it unwinds settled money, so it's manager-and-up
+	// only, not plain members.
+	PermSaleRefund = "sale:refund"
+
 	// PermAll grants everything (owner).
 	PermAll = "*:*"
 )
@@ -70,10 +76,10 @@ type SystemRole struct {
 var SystemRoles = []SystemRole{
 	{Slug: "owner", Name: "Owner", Permissions: []string{PermAll}},
 	{Slug: "admin", Name: "Admin", Permissions: []string{
-		"user:*", "branch:*", "plugin:*", PermBillingView, PermSaleVoid,
+		"user:*", "branch:*", "plugin:*", PermBillingView, PermSaleVoid, PermSaleRefund,
 	}},
 	{Slug: "manager", Name: "Manager", Permissions: []string{
-		PermUserRead, PermUserInvite, PermBranchRead, PermBranchWrite, PermSaleVoid,
+		PermUserRead, PermUserInvite, PermBranchRead, PermBranchWrite, PermSaleVoid, PermSaleRefund,
 	}},
 	{Slug: "member", Name: "Member", Permissions: []string{
 		PermUserRead, PermBranchRead,
