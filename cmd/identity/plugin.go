@@ -76,6 +76,14 @@ type LoginRequest struct {
 	Password string `json:"password" example:"secret123"`
 }
 
+// AuthConfigResponse is the public, unauthenticated client config. googleClientID
+// is the (public) Web OAuth client ID the app uses for Sign in with Google;
+// googleEnabled is false when no client IDs are configured server-side.
+type AuthConfigResponse struct {
+	GoogleClientID string `json:"googleClientId" example:"1234-web.apps.googleusercontent.com"`
+	GoogleEnabled  bool   `json:"googleEnabled"  example:"true"`
+}
+
 // GoogleLoginRequest is a password-free login: idToken is a Google-issued OpenID
 // Connect ID token; slug is optional (picks the tenant for a multi-tenant user).
 type GoogleLoginRequest struct {
@@ -305,6 +313,11 @@ type handlers struct {
 	saga      *tenant.Saga
 	installer *pluginmgr.Installer
 	pluginKey string // shared PLUGIN_API_KEY guarding /internal/* plugin-to-plugin routes
+	// googleClientID is the app-facing OAuth client ID (the Web client ID, which
+	// both the web GIS flow and Android Credential Manager request). Served by
+	// GET /auth/config so the app configures Google Sign-In from the server
+	// instead of hardcoding it. Empty when Google login is disabled.
+	googleClientID string
 }
 
 // registerRoutes wires all identity routes onto the plugin.
@@ -312,6 +325,7 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/register")
 	p.Public("/auth/login")
 	p.Public("/auth/google")
+	p.Public("/auth/config")
 	p.Public("/auth/slug-available")
 	p.Public("/auth/slug-suggest")
 	p.Public("/admin")
@@ -363,6 +377,15 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Response(http.StatusOK, new(LoginResponse)),
 		option.Response(http.StatusConflict, new(TenantChooserResponse)),
 		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+	)
+	p.GET("/auth/config", h.authConfig,
+		option.Summary("Public auth configuration"),
+		option.Description("Unauthenticated. Returns client-side auth config the app needs before "+
+			"login — notably the Google OAuth client ID (a public value) and whether Google "+
+			"login is enabled. Lets the app configure Sign in with Google from the server "+
+			"instead of hardcoding the client ID."),
+		option.Tags("auth"),
+		option.Response(http.StatusOK, new(AuthConfigResponse)),
 	)
 	p.POST("/auth/google", h.googleLogin,
 		option.Summary("Login with Google"),
@@ -769,6 +792,15 @@ func (h *handlers) login(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, LoginResponse{Token: res.Token})
+}
+
+// authConfig serves the public client-side auth config (no token). The Google
+// client ID is a public value, safe to hand out unauthenticated.
+func (h *handlers) authConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, AuthConfigResponse{
+		GoogleClientID: h.googleClientID,
+		GoogleEnabled:  h.googleClientID != "",
+	})
 }
 
 // googleLogin is the password-free counterpart of login: it takes a Google ID

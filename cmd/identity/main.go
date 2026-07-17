@@ -87,9 +87,13 @@ func main() {
 
 	// Google login (password-free): verify ID tokens whose "aud" is one of the
 	// configured OAuth client IDs (Android/Web/Desktop). Empty = feature off.
+	// The first id is the app-facing one (the Web client ID) served by
+	// GET /auth/config so the app doesn't hardcode it.
 	var googleVerifier *iauth.GoogleVerifier
+	var googleClientID string
 	if ids := iauth.ParseGoogleClientIDs(os.Getenv("GOOGLE_CLIENT_IDS")); len(ids) > 0 {
 		googleVerifier = iauth.NewGoogleVerifier(ids)
+		googleClientID = ids[0]
 		log.Printf("[identity] google login enabled for %d client id(s)", len(ids))
 	}
 
@@ -106,7 +110,8 @@ func main() {
 	})
 	registerRoutes(p, &handlers{
 		authSvc: authSvc, saga: saga, installer: installer,
-		pluginKey: os.Getenv("PLUGIN_API_KEY"),
+		pluginKey:      os.Getenv("PLUGIN_API_KEY"),
+		googleClientID: googleClientID,
 	})
 
 	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
