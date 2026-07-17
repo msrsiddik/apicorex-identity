@@ -217,6 +217,7 @@ var (
 		{Name: "id", Type: field.TypeString, Unique: true},
 		{Name: "email", Type: field.TypeString, Unique: true},
 		{Name: "password_hash", Type: field.TypeString},
+		{Name: "google_sub", Type: field.TypeString, Unique: true, Nullable: true},
 		{Name: "is_platform_admin", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
 	}

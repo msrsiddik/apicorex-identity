@@ -58,11 +58,15 @@ type Service struct {
 	entClient *ent.Client
 	db        *sql.DB
 	rbac      *rbac.Store
+	// google verifies Google ID tokens for password-free login. nil when no
+	// GOOGLE_CLIENT_IDS are configured — LoginWithGoogle then rejects everything.
+	google *GoogleVerifier
 }
 
-// NewService builds the auth Service.
-func NewService(entClient *ent.Client, db *sql.DB, rbacStore *rbac.Store) *Service {
-	return &Service{entClient: entClient, db: db, rbac: rbacStore}
+// NewService builds the auth Service. googleVerifier may be nil to disable
+// Google login (no client IDs configured).
+func NewService(entClient *ent.Client, db *sql.DB, rbacStore *rbac.Store, googleVerifier *GoogleVerifier) *Service {
+	return &Service{entClient: entClient, db: db, rbac: rbacStore, google: googleVerifier}
 }
 
 // Login verifies the global credential (shared.users), resolves which tenant the
@@ -78,7 +82,79 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)); err != nil {
 		return nil, errors.New("invalid credentials")
 	}
+	// Credential proven — resolve the tenant and issue a token. Everything past
+	// this point is credential-agnostic, so Google login (LoginWithGoogle) reuses it.
+	return s.resolveTenantAndIssue(ctx, u, in.Slug)
+}
 
+// GoogleLoginInput is a password-free login: a Google ID token proves the user's
+// identity, and Slug (optional) picks the tenant when they belong to several.
+type GoogleLoginInput struct {
+	IDToken string
+	Slug    string
+}
+
+// ErrGoogleDisabled: Google login isn't configured (no GOOGLE_CLIENT_IDS).
+var ErrGoogleDisabled = errors.New("google login not enabled")
+
+// ErrNoGoogleAccount: the Google token is valid, but no user with that email
+// exists. Staff must be provisioned first (an owner invites them); Google login
+// never creates accounts.
+var ErrNoGoogleAccount = errors.New("no account for this google email")
+
+// LoginWithGoogle logs a user in using a verified Google ID token instead of a
+// password. The token is checked (signature, audience, expiry, verified email);
+// then the user is matched by google_sub first, else by email — binding the sub
+// on that first email match so future logins resolve directly by sub. Unknown
+// emails are rejected: Google login authenticates existing staff, it never
+// self-registers. Once matched, tenant resolution and token issue are shared
+// with password login (resolveTenantAndIssue), including the multi-tenant chooser.
+func (s *Service) LoginWithGoogle(ctx context.Context, in GoogleLoginInput) (*LoginResult, error) {
+	if s.google == nil {
+		return nil, ErrGoogleDisabled
+	}
+	claims, err := s.google.Verify(ctx, in.IDToken)
+	if err != nil {
+		return nil, err // ErrGoogleToken — handler maps to 401
+	}
+
+	// 1. match by google_sub (the stable, spoof-proof key).
+	u, err := s.entClient.User.Query().Where(entuser.GoogleSub(claims.Sub)).Only(ctx)
+	if err == nil {
+		return s.resolveTenantAndIssue(ctx, u, in.Slug)
+	}
+	if !ent.IsNotFound(err) {
+		return nil, fmt.Errorf("lookup by google sub: %w", err)
+	}
+
+	// 2. first-time Google login for this account: match by verified email and
+	// bind the sub so subsequent logins resolve by sub directly.
+	u, err = s.entClient.User.Query().Where(entuser.Email(claims.Email)).Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, ErrNoGoogleAccount
+		}
+		return nil, fmt.Errorf("lookup by email: %w", err)
+	}
+	// Bind only if not already bound to a DIFFERENT sub (shouldn't happen — the
+	// sub lookup above would have matched — but guard against overwriting).
+	if u.GoogleSub == nil {
+		if bound, berr := s.entClient.User.UpdateOneID(u.ID).
+			SetGoogleSub(claims.Sub).Save(ctx); berr == nil {
+			u = bound
+		}
+		// A bind failure (e.g. race on the unique index) isn't fatal: the identity
+		// is already proven by the verified email, so proceed with login.
+	}
+	return s.resolveTenantAndIssue(ctx, u, in.Slug)
+}
+
+// resolveTenantAndIssue completes a login once the user's identity is proven
+// (by password or by a verified Google token): it loads the user's memberships,
+// picks the tenant (honoring an optional slug, or returning the multi-tenant
+// chooser), resolves the branch, and mints a device token. Callers must have
+// already authenticated u — this method trusts u as the signed-in user.
+func (s *Service) resolveTenantAndIssue(ctx context.Context, u *ent.User, slug string) (*LoginResult, error) {
 	// 2. memberships (exactly one row per tenant — the user's single active branch
 	// there). Suspended memberships are excluded up front: a suspended user can't
 	// sign in, and their tenant must not appear in the multi-tenant chooser.
@@ -97,9 +173,9 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	var t *ent.Tenant
 	tenantIDs := distinctTenantIDs(memberships)
 	switch {
-	case in.Slug != "":
+	case slug != "":
 		t, err = s.entClient.Tenant.Query().
-			Where(tenant.Slug(in.Slug), tenant.Status("active")).Only(ctx)
+			Where(tenant.Slug(slug), tenant.Status("active")).Only(ctx)
 		if err != nil {
 			return nil, errors.New("tenant not found")
 		}

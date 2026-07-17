@@ -21,6 +21,8 @@ type User struct {
 	Email string `json:"email,omitempty"`
 	// PasswordHash holds the value of the "password_hash" field.
 	PasswordHash string `json:"-"`
+	// GoogleSub holds the value of the "google_sub" field.
+	GoogleSub *string `json:"google_sub,omitempty"`
 	// IsPlatformAdmin holds the value of the "is_platform_admin" field.
 	IsPlatformAdmin bool `json:"is_platform_admin,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -56,7 +58,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case user.FieldIsPlatformAdmin:
 			values[i] = new(sql.NullBool)
-		case user.FieldID, user.FieldEmail, user.FieldPasswordHash:
+		case user.FieldID, user.FieldEmail, user.FieldPasswordHash, user.FieldGoogleSub:
 			values[i] = new(sql.NullString)
 		case user.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -92,6 +94,13 @@ func (u *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field password_hash", values[i])
 			} else if value.Valid {
 				u.PasswordHash = value.String
+			}
+		case user.FieldGoogleSub:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field google_sub", values[i])
+			} else if value.Valid {
+				u.GoogleSub = new(string)
+				*u.GoogleSub = value.String
 			}
 		case user.FieldIsPlatformAdmin:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -150,6 +159,11 @@ func (u *User) String() string {
 	builder.WriteString(u.Email)
 	builder.WriteString(", ")
 	builder.WriteString("password_hash=<sensitive>")
+	builder.WriteString(", ")
+	if v := u.GoogleSub; v != nil {
+		builder.WriteString("google_sub=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("is_platform_admin=")
 	builder.WriteString(fmt.Sprintf("%v", u.IsPlatformAdmin))

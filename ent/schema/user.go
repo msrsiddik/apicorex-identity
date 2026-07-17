@@ -28,6 +28,12 @@ func (User) Fields() []ent.Field {
 		field.String("id").Unique().Immutable(), // "u_<uuid8>"
 		field.String("email").Unique(),
 		field.String("password_hash").Sensitive(),
+		// google_sub is the Google account's stable subject id ("sub" claim),
+		// bound the first time a user signs in with Google (matched by email).
+		// Nullable/optional (password-only users never have one) and unique so a
+		// Google account maps to exactly one user. Once bound it survives email
+		// changes on the Google side and is the primary Google-login lookup key.
+		field.String("google_sub").Optional().Unique().Nillable(),
 		// is_platform_admin is DB-authoritative (so every identity instance agrees,
 		// unlike an env var that can drift across replicas). PLATFORM_ADMIN_EMAILS
 		// only bootstraps it at boot; POST/DELETE /platform-admins manage it after.

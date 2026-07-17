@@ -33,6 +33,20 @@ func (uc *UserCreate) SetPasswordHash(s string) *UserCreate {
 	return uc
 }
 
+// SetGoogleSub sets the "google_sub" field.
+func (uc *UserCreate) SetGoogleSub(s string) *UserCreate {
+	uc.mutation.SetGoogleSub(s)
+	return uc
+}
+
+// SetNillableGoogleSub sets the "google_sub" field if the given value is not nil.
+func (uc *UserCreate) SetNillableGoogleSub(s *string) *UserCreate {
+	if s != nil {
+		uc.SetGoogleSub(*s)
+	}
+	return uc
+}
+
 // SetIsPlatformAdmin sets the "is_platform_admin" field.
 func (uc *UserCreate) SetIsPlatformAdmin(b bool) *UserCreate {
 	uc.mutation.SetIsPlatformAdmin(b)
@@ -184,6 +198,10 @@ func (uc *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := uc.mutation.PasswordHash(); ok {
 		_spec.SetField(user.FieldPasswordHash, field.TypeString, value)
 		_node.PasswordHash = value
+	}
+	if value, ok := uc.mutation.GoogleSub(); ok {
+		_spec.SetField(user.FieldGoogleSub, field.TypeString, value)
+		_node.GoogleSub = &value
 	}
 	if value, ok := uc.mutation.IsPlatformAdmin(); ok {
 		_spec.SetField(user.FieldIsPlatformAdmin, field.TypeBool, value)

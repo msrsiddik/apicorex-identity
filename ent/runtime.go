@@ -102,11 +102,11 @@ func init() {
 	userFields := schema.User{}.Fields()
 	_ = userFields
 	// userDescIsPlatformAdmin is the schema descriptor for is_platform_admin field.
-	userDescIsPlatformAdmin := userFields[3].Descriptor()
+	userDescIsPlatformAdmin := userFields[4].Descriptor()
 	// user.DefaultIsPlatformAdmin holds the default value on creation for the is_platform_admin field.
 	user.DefaultIsPlatformAdmin = userDescIsPlatformAdmin.Default.(bool)
 	// userDescCreatedAt is the schema descriptor for created_at field.
-	userDescCreatedAt := userFields[4].Descriptor()
+	userDescCreatedAt := userFields[5].Descriptor()
 	// user.DefaultCreatedAt holds the default value on creation for the created_at field.
 	user.DefaultCreatedAt = userDescCreatedAt.Default.(func() time.Time)
 	userprofileFields := schema.UserProfile{}.Fields()

@@ -21,7 +21,7 @@ func introspect(t *testing.T, svc *auth.Service, raw string) *auth.IntrospectRes
 
 // newService builds the auth service under test.
 func newService(pg *testutil.PG) *auth.Service {
-	return auth.NewService(pg.EntClient, pg.DB, pg.RBAC)
+	return auth.NewService(pg.EntClient, pg.DB, pg.RBAC, nil)
 }
 
 // Registration creates a default "main" branch; login lands the owner on it and
