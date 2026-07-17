@@ -5245,6 +5245,7 @@ type UserMutation struct {
 	id                  *string
 	email               *string
 	password_hash       *string
+	google_sub          *string
 	is_platform_admin   *bool
 	created_at          *time.Time
 	clearedFields       map[string]struct{}
@@ -5432,6 +5433,55 @@ func (m *UserMutation) ResetPasswordHash() {
 	m.password_hash = nil
 }
 
+// SetGoogleSub sets the "google_sub" field.
+func (m *UserMutation) SetGoogleSub(s string) {
+	m.google_sub = &s
+}
+
+// GoogleSub returns the value of the "google_sub" field in the mutation.
+func (m *UserMutation) GoogleSub() (r string, exists bool) {
+	v := m.google_sub
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGoogleSub returns the old "google_sub" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldGoogleSub(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGoogleSub is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGoogleSub requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGoogleSub: %w", err)
+	}
+	return oldValue.GoogleSub, nil
+}
+
+// ClearGoogleSub clears the value of the "google_sub" field.
+func (m *UserMutation) ClearGoogleSub() {
+	m.google_sub = nil
+	m.clearedFields[user.FieldGoogleSub] = struct{}{}
+}
+
+// GoogleSubCleared returns if the "google_sub" field was cleared in this mutation.
+func (m *UserMutation) GoogleSubCleared() bool {
+	_, ok := m.clearedFields[user.FieldGoogleSub]
+	return ok
+}
+
+// ResetGoogleSub resets all changes to the "google_sub" field.
+func (m *UserMutation) ResetGoogleSub() {
+	m.google_sub = nil
+	delete(m.clearedFields, user.FieldGoogleSub)
+}
+
 // SetIsPlatformAdmin sets the "is_platform_admin" field.
 func (m *UserMutation) SetIsPlatformAdmin(b bool) {
 	m.is_platform_admin = &b
@@ -5592,12 +5642,15 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 4)
+	fields := make([]string, 0, 5)
 	if m.email != nil {
 		fields = append(fields, user.FieldEmail)
 	}
 	if m.password_hash != nil {
 		fields = append(fields, user.FieldPasswordHash)
+	}
+	if m.google_sub != nil {
+		fields = append(fields, user.FieldGoogleSub)
 	}
 	if m.is_platform_admin != nil {
 		fields = append(fields, user.FieldIsPlatformAdmin)
@@ -5617,6 +5670,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.Email()
 	case user.FieldPasswordHash:
 		return m.PasswordHash()
+	case user.FieldGoogleSub:
+		return m.GoogleSub()
 	case user.FieldIsPlatformAdmin:
 		return m.IsPlatformAdmin()
 	case user.FieldCreatedAt:
@@ -5634,6 +5689,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldEmail(ctx)
 	case user.FieldPasswordHash:
 		return m.OldPasswordHash(ctx)
+	case user.FieldGoogleSub:
+		return m.OldGoogleSub(ctx)
 	case user.FieldIsPlatformAdmin:
 		return m.OldIsPlatformAdmin(ctx)
 	case user.FieldCreatedAt:
@@ -5660,6 +5717,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPasswordHash(v)
+		return nil
+	case user.FieldGoogleSub:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGoogleSub(v)
 		return nil
 	case user.FieldIsPlatformAdmin:
 		v, ok := value.(bool)
@@ -5704,7 +5768,11 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *UserMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(user.FieldGoogleSub) {
+		fields = append(fields, user.FieldGoogleSub)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -5717,6 +5785,11 @@ func (m *UserMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *UserMutation) ClearField(name string) error {
+	switch name {
+	case user.FieldGoogleSub:
+		m.ClearGoogleSub()
+		return nil
+	}
 	return fmt.Errorf("unknown User nullable field %s", name)
 }
 
@@ -5729,6 +5802,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldPasswordHash:
 		m.ResetPasswordHash()
+		return nil
+	case user.FieldGoogleSub:
+		m.ResetGoogleSub()
 		return nil
 	case user.FieldIsPlatformAdmin:
 		m.ResetIsPlatformAdmin()

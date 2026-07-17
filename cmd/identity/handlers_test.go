@@ -41,7 +41,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *handlers) {
 	t.Helper()
 	pg := testutil.NewPostgres(t)
 
-	authSvc := iauth.NewService(pg.EntClient, pg.DB, pg.RBAC)
+	authSvc := iauth.NewService(pg.EntClient, pg.DB, pg.RBAC, nil)
 	saga := itenant.NewSaga(pg.EntClient, pg.DB, pg.DSN, noopInstaller{}, pg.RBAC)
 	installer := pluginmgr.NewInstaller(pg.EntClient, migrator.New(pg.EntClient, pg.DB), emptyRegistry{})
 	h := &handlers{authSvc: authSvc, saga: saga, installer: installer, pluginKey: testPluginKey}

@@ -85,8 +85,16 @@ func main() {
 		log.Printf("[identity] platform admin bootstrap: %d user(s) granted from %d configured email(s)", granted, len(emails))
 	}
 
+	// Google login (password-free): verify ID tokens whose "aud" is one of the
+	// configured OAuth client IDs (Android/Web/Desktop). Empty = feature off.
+	var googleVerifier *iauth.GoogleVerifier
+	if ids := iauth.ParseGoogleClientIDs(os.Getenv("GOOGLE_CLIENT_IDS")); len(ids) > 0 {
+		googleVerifier = iauth.NewGoogleVerifier(ids)
+		log.Printf("[identity] google login enabled for %d client id(s)", len(ids))
+	}
+
 	saga := itenant.NewSaga(entClient, db, dsn, installer, rbacStore)
-	authSvc := iauth.NewService(entClient, db, rbacStore)
+	authSvc := iauth.NewService(entClient, db, rbacStore, googleVerifier)
 
 	p := plugin.New(plugin.Config{
 		Name:          "identity",

@@ -18,6 +18,8 @@ const (
 	FieldEmail = "email"
 	// FieldPasswordHash holds the string denoting the password_hash field in the database.
 	FieldPasswordHash = "password_hash"
+	// FieldGoogleSub holds the string denoting the google_sub field in the database.
+	FieldGoogleSub = "google_sub"
 	// FieldIsPlatformAdmin holds the string denoting the is_platform_admin field in the database.
 	FieldIsPlatformAdmin = "is_platform_admin"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -40,6 +42,7 @@ var Columns = []string{
 	FieldID,
 	FieldEmail,
 	FieldPasswordHash,
+	FieldGoogleSub,
 	FieldIsPlatformAdmin,
 	FieldCreatedAt,
 }
@@ -77,6 +80,11 @@ func ByEmail(opts ...sql.OrderTermOption) OrderOption {
 // ByPasswordHash orders the results by the password_hash field.
 func ByPasswordHash(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPasswordHash, opts...).ToFunc()
+}
+
+// ByGoogleSub orders the results by the google_sub field.
+func ByGoogleSub(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGoogleSub, opts...).ToFunc()
 }
 
 // ByIsPlatformAdmin orders the results by the is_platform_admin field.

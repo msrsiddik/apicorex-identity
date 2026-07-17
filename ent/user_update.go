@@ -57,6 +57,26 @@ func (uu *UserUpdate) SetNillablePasswordHash(s *string) *UserUpdate {
 	return uu
 }
 
+// SetGoogleSub sets the "google_sub" field.
+func (uu *UserUpdate) SetGoogleSub(s string) *UserUpdate {
+	uu.mutation.SetGoogleSub(s)
+	return uu
+}
+
+// SetNillableGoogleSub sets the "google_sub" field if the given value is not nil.
+func (uu *UserUpdate) SetNillableGoogleSub(s *string) *UserUpdate {
+	if s != nil {
+		uu.SetGoogleSub(*s)
+	}
+	return uu
+}
+
+// ClearGoogleSub clears the value of the "google_sub" field.
+func (uu *UserUpdate) ClearGoogleSub() *UserUpdate {
+	uu.mutation.ClearGoogleSub()
+	return uu
+}
+
 // SetIsPlatformAdmin sets the "is_platform_admin" field.
 func (uu *UserUpdate) SetIsPlatformAdmin(b bool) *UserUpdate {
 	uu.mutation.SetIsPlatformAdmin(b)
@@ -153,6 +173,12 @@ func (uu *UserUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := uu.mutation.PasswordHash(); ok {
 		_spec.SetField(user.FieldPasswordHash, field.TypeString, value)
+	}
+	if value, ok := uu.mutation.GoogleSub(); ok {
+		_spec.SetField(user.FieldGoogleSub, field.TypeString, value)
+	}
+	if uu.mutation.GoogleSubCleared() {
+		_spec.ClearField(user.FieldGoogleSub, field.TypeString)
 	}
 	if value, ok := uu.mutation.IsPlatformAdmin(); ok {
 		_spec.SetField(user.FieldIsPlatformAdmin, field.TypeBool, value)
@@ -252,6 +278,26 @@ func (uuo *UserUpdateOne) SetNillablePasswordHash(s *string) *UserUpdateOne {
 	if s != nil {
 		uuo.SetPasswordHash(*s)
 	}
+	return uuo
+}
+
+// SetGoogleSub sets the "google_sub" field.
+func (uuo *UserUpdateOne) SetGoogleSub(s string) *UserUpdateOne {
+	uuo.mutation.SetGoogleSub(s)
+	return uuo
+}
+
+// SetNillableGoogleSub sets the "google_sub" field if the given value is not nil.
+func (uuo *UserUpdateOne) SetNillableGoogleSub(s *string) *UserUpdateOne {
+	if s != nil {
+		uuo.SetGoogleSub(*s)
+	}
+	return uuo
+}
+
+// ClearGoogleSub clears the value of the "google_sub" field.
+func (uuo *UserUpdateOne) ClearGoogleSub() *UserUpdateOne {
+	uuo.mutation.ClearGoogleSub()
 	return uuo
 }
 
@@ -381,6 +427,12 @@ func (uuo *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) 
 	}
 	if value, ok := uuo.mutation.PasswordHash(); ok {
 		_spec.SetField(user.FieldPasswordHash, field.TypeString, value)
+	}
+	if value, ok := uuo.mutation.GoogleSub(); ok {
+		_spec.SetField(user.FieldGoogleSub, field.TypeString, value)
+	}
+	if uuo.mutation.GoogleSubCleared() {
+		_spec.ClearField(user.FieldGoogleSub, field.TypeString)
 	}
 	if value, ok := uuo.mutation.IsPlatformAdmin(); ok {
 		_spec.SetField(user.FieldIsPlatformAdmin, field.TypeBool, value)

@@ -76,6 +76,13 @@ type LoginRequest struct {
 	Password string `json:"password" example:"secret123"`
 }
 
+// GoogleLoginRequest is a password-free login: idToken is a Google-issued OpenID
+// Connect ID token; slug is optional (picks the tenant for a multi-tenant user).
+type GoogleLoginRequest struct {
+	IDToken string `json:"idToken" example:"eyJhbGciOiJSUzI1NiIsImtpZCI6..."`
+	Slug    string `json:"slug"    example:"acme"`
+}
+
 // LoginResponse carries the single opaque device token. There is no refresh
 // token and no expiry — the token stays valid until revoked (logout, member
 // removal/suspension of its owner).
@@ -304,6 +311,7 @@ type handlers struct {
 func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/register")
 	p.Public("/auth/login")
+	p.Public("/auth/google")
 	p.Public("/auth/slug-available")
 	p.Public("/auth/slug-suggest")
 	p.Public("/admin")
@@ -352,6 +360,20 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 			"409 with a TenantChooserResponse — pick a tenant and retry with its slug."),
 		option.Tags("auth"),
 		option.Request(new(LoginRequest)),
+		option.Response(http.StatusOK, new(LoginResponse)),
+		option.Response(http.StatusConflict, new(TenantChooserResponse)),
+		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
+	)
+	p.POST("/auth/google", h.googleLogin,
+		option.Summary("Login with Google"),
+		option.Description("Password-free login with a Google ID token. The token is verified "+
+			"(signature, audience, expiry, verified email); the matching staff account must "+
+			"already exist (Google login never self-registers). Same tenant model as /auth/login: "+
+			"returns a device token, or 409 with a TenantChooserResponse when the user has "+
+			"multiple tenants and no slug is supplied. 401 if the token is invalid or no account "+
+			"matches the email."),
+		option.Tags("auth"),
+		option.Request(new(GoogleLoginRequest)),
 		option.Response(http.StatusOK, new(LoginResponse)),
 		option.Response(http.StatusConflict, new(TenantChooserResponse)),
 		option.Response(http.StatusUnauthorized, new(ErrorResponse)),
@@ -743,6 +765,35 @@ func (h *handlers) login(c *gin.Context) {
 			})
 			return
 		}
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, LoginResponse{Token: res.Token})
+}
+
+// googleLogin is the password-free counterpart of login: it takes a Google ID
+// token instead of email+password. Shares the same responses — device token on
+// success, 409 tenant chooser for multi-tenant users, 401 on a bad token or an
+// email with no account.
+func (h *handlers) googleLogin(c *gin.Context) {
+	var in GoogleLoginRequest
+	if err := c.ShouldBindJSON(&in); err != nil || in.IDToken == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	res, err := h.authSvc.LoginWithGoogle(c.Request.Context(), auth.GoogleLoginInput{
+		IDToken: in.IDToken, Slug: in.Slug,
+	})
+	if err != nil {
+		var mt *auth.MultiTenantError
+		if errors.As(err, &mt) {
+			c.JSON(http.StatusConflict, TenantChooserResponse{
+				Message: "select a tenant", Tenants: mt.Tenants,
+			})
+			return
+		}
+		// Everything else (bad token, unknown email, disabled) is a 401 — the
+		// client can't tell why, which is what we want for an auth endpoint.
 		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: err.Error()})
 		return
 	}
