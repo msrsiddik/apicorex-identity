@@ -7,6 +7,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import type { SectionId } from "@/components/Sidebar";
 import type { Tenant } from "@/lib/types";
 import {
+  LayoutDashboard,
   Store,
   Plug,
   ShieldCheck,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 
 const SECTIONS: { id: SectionId; label: string; Icon: typeof Store }[] = [
+  { id: "dashboard", label: "Go to Dashboard", Icon: LayoutDashboard },
   { id: "tenants", label: "Go to Tenants", Icon: Store },
   { id: "plugins", label: "Go to Plugins", Icon: Plug },
   { id: "admins", label: "Go to Platform admins", Icon: ShieldCheck },

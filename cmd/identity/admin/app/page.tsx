@@ -8,6 +8,7 @@ import Sidebar, { type SectionId } from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import CommandPalette from "@/components/CommandPalette";
 import LoginCard from "@/components/LoginCard";
+import DashboardPanel from "@/components/DashboardPanel";
 import TenantsPanel from "@/components/TenantsPanel";
 import TenantDrilldown from "@/components/TenantDrilldown";
 import PluginsPanel from "@/components/PluginsPanel";
@@ -16,6 +17,7 @@ import RolesPanel from "@/components/RolesPanel";
 import DatabasePanel from "@/components/DatabasePanel";
 
 const SECTION_LABELS: Record<SectionId, string> = {
+  dashboard: "Dashboard",
   tenants: "Tenants",
   plugins: "Plugins",
   admins: "Platform admins",
@@ -27,7 +29,7 @@ export default function Page() {
   // undefined = still resuming; null = logged out; Me = logged in.
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [loginError, setLoginError] = useState("");
-  const [section, setSection] = useState<SectionId>("tenants");
+  const [section, setSection] = useState<SectionId>("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   // Tenant drill-in lives at the shell so the breadcrumb reflects it.
   const [drillTenant, setDrillTenant] = useState<Tenant | null>(null);
@@ -124,6 +126,9 @@ export default function Page() {
         <Topbar crumbs={crumbs} />
         <main className="min-w-0 flex-1 px-6 py-5">
           <div className="mx-auto max-w-6xl">
+            {section === "dashboard" && (
+              <DashboardPanel onNavigate={navigate} onDrill={drillToTenant} />
+            )}
             {section === "tenants" &&
               (drillTenant ? (
                 <TenantDrilldown tenant={drillTenant} />

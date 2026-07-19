@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/ThemeProvider";
 import {
+  LayoutDashboard,
   Store,
   Plug,
   ShieldCheck,
@@ -19,6 +20,7 @@ import {
 import type { Me } from "@/lib/types";
 
 export type SectionId =
+  | "dashboard"
   | "tenants"
   | "plugins"
   | "admins"
@@ -26,6 +28,7 @@ export type SectionId =
   | "database";
 
 const NAV: { id: SectionId; label: string; Icon: typeof Store }[] = [
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { id: "tenants", label: "Tenants", Icon: Store },
   { id: "plugins", label: "Plugins", Icon: Plug },
   { id: "admins", label: "Platform admins", Icon: ShieldCheck },
