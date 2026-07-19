@@ -2,8 +2,8 @@
   cmd = "go build -o ./tmp/identity ./cmd/identity"
   entrypoint = "./tmp/identity"
   delay = 1000
-  exclude_dir = ["tmp", "vendor", "ent"]
-  include_ext = ["go", "env", "html"]
+  exclude_dir = ["tmp", "vendor", "ent", "cmd/identity/admin"]
+  include_ext = ["go", "env"]
   kill_delay = "2s"
   rerun_delay = 500
 

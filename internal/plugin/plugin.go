@@ -175,6 +175,24 @@ func (p *Plugin) Internal(method, path string, h gin.HandlerFunc) {
 	p.engine.Handle(method, path, h)
 }
 
+// Static serves a whole subtree (a prefix and everything beneath it) with one
+// handler — used for an embedded static site whose asset paths aren't known
+// ahead of time. prefix is a path like "/admin".
+//
+// Gin and Core use different wildcard syntaxes, so the two are registered
+// separately: Gin needs a named catch-all ("/admin/*filepath"), while Core's
+// dispatcher prefix-matches on a trailing "/*" ("/admin/*"). The manifest
+// therefore advertises "/admin/*" so Core forwards every /admin/... request
+// here; the handler reads the matched tail from the "filepath" gin param.
+// The route is marked public (no per-asset token) — the served app does its
+// own /auth/login and calls the JSON API with the resulting token.
+func (p *Plugin) Static(prefix string, h gin.HandlerFunc) {
+	p.engine.GET(prefix+"/*filepath", h)
+	corePattern := prefix + "/*"
+	p.routes = append(p.routes, route{Method: http.MethodGet, Path: corePattern})
+	p.public[corePattern] = true
+}
+
 // Handle registers a Gin handler and records route metadata + OpenAPI docs.
 func (p *Plugin) Handle(method, path string, h gin.HandlerFunc, docs ...option.OperationOption) {
 	p.engine.Handle(method, path, h)

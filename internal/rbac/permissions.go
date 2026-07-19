@@ -39,6 +39,19 @@ const (
 	PermAll = "*:*"
 )
 
+// Catalog is the full set of concrete, grantable permissions — the vocabulary a
+// custom role can be built from. Wildcards (branch:*, *:*) are intentionally
+// excluded: they're for the seeded system roles, not something a tenant assigns
+// by hand. Ordered for display, grouped by resource.
+var Catalog = []string{
+	PermUserRead, PermUserWrite, PermUserInvite,
+	PermBranchRead, PermBranchWrite, PermBranchManage,
+	PermPluginInstall, PermPluginUninstall,
+	PermBillingView, PermBillingManage,
+	PermTenantManage,
+	PermSaleVoid, PermSaleRefund,
+}
+
 // BaselinePermissions is the floor granted to every authenticated user
 // regardless of role: a neutral read-only set so even a role with no (or empty)
 // permissions can see its own profile and current branch. Merged into the token

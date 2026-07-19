@@ -158,7 +158,7 @@ compose file in the [Core repo](../apicorex) instead.
 | GET | `/platform-admins` | no | *platform admin* | List platform admins |
 | POST | `/platform-admins` | no | *platform admin* | Grant an existing user platform admin |
 | DELETE | `/platform-admins/:email` | no | *platform admin* | Revoke a user's platform admin |
-| GET | `/admin` | yes | — | Platform-admin web UI (see below) |
+| GET | `/console/*` | yes | — | Platform-admin web UI (see below) |
 
 > The **Permission** column is what Core's gateway requires before proxying
 > (handlers re-check it too). `—` means any authenticated user — `/branches/switch`
@@ -189,11 +189,17 @@ compose file in the [Core repo](../apicorex) instead.
 > This is intentional: account creation and privilege escalation stay separate
 > steps, so granting platform admin can never be used to spray new credentials.
 >
-> **`/admin` is a self-contained HTML page** (login form + tenant list + plugin
-> admins), served by this plugin but with no session or auth logic of its own —
-> it authenticates via the ordinary `/auth/login` and stores the access token in
+> **`/console` is a Next.js app** (login form + tenant list + plugin admins),
+> statically exported and embedded into the binary (`//go:embed all:admin/out`),
+> served by this plugin but with no session or auth logic of its own — it
+> authenticates via the ordinary `/auth/login` and stores the access token in
 > `localStorage`, then calls the JSON API through Core's gateway exactly like
-> any other client. Open it through Core (e.g. `http://localhost:8080/admin`)
+> any other client. (It's served at `/console`, not `/admin`: Core's gateway
+> firewall reserves and blocks the `/admin/` prefix, which would 403 the app's
+> assets.) The source lives in `cmd/identity/admin/`; rebuild it with
+> `cd cmd/identity/admin && npm ci && npm run build` (this regenerates
+> `admin/out`, which the Go build embeds — the Docker image does both stages
+> automatically). Open it through Core (e.g. `http://localhost:8080/console`)
 > so the browser's requests go through the same JWT verification as everything
 > else. Like every plugin route, this only works because the plugin trusts
 > Core's `X-ApiCoreX-*` headers unconditionally — the plugin's own port should

@@ -3,10 +3,14 @@ package main
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/msrsiddik/apicorex-identity/internal/auth"
+	"github.com/msrsiddik/apicorex-identity/internal/dbbackup"
 	"github.com/msrsiddik/apicorex-identity/internal/plugin"
 	"github.com/msrsiddik/apicorex-identity/internal/pluginmgr"
 	"github.com/msrsiddik/apicorex-identity/internal/rbac"
@@ -249,6 +253,10 @@ type ListRolesResponse struct {
 	Roles []auth.RoleInfo `json:"roles"`
 }
 
+type ListPermissionsResponse struct {
+	Permissions []string `json:"permissions"`
+}
+
 type ListMembersResponse struct {
 	Members []auth.MemberInfo `json:"members"`
 }
@@ -312,7 +320,8 @@ type handlers struct {
 	authSvc   *auth.Service
 	saga      *tenant.Saga
 	installer *pluginmgr.Installer
-	pluginKey string // shared PLUGIN_API_KEY guarding /internal/* plugin-to-plugin routes
+	backup    *dbbackup.Service // pg_dump/psql wrapper for DB backup & restore
+	pluginKey string           // shared PLUGIN_API_KEY guarding /internal/* plugin-to-plugin routes
 	// googleClientID is the app-facing OAuth client ID (the Web client ID, which
 	// both the web GIS flow and Android Credential Manager request). Served by
 	// GET /auth/config so the app configures Google Sign-In from the server
@@ -328,19 +337,22 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 	p.Public("/auth/config")
 	p.Public("/auth/slug-available")
 	p.Public("/auth/slug-suggest")
-	p.Public("/admin")
 
 	// Plugin-to-plugin: Core resolves every request's bearer through this. Not
 	// in the manifest — Core never proxies it publicly; it's guarded by the
 	// shared PLUGIN_API_KEY instead of a user token.
 	p.Internal(http.MethodPost, "/internal/introspect", h.introspect)
 
-	p.GET("/admin", serveAdmin,
-		option.Summary("Platform admin UI"),
-		option.Description("A self-contained HTML page. It authenticates itself via /auth/login and calls "+
-			"the JSON API with the resulting token — no separate session or server-side auth of its own."),
-		option.Tags("platform-admins"),
-	)
+	// The admin UI is a Next.js app statically exported and embedded (see
+	// admin.go). It's served under /console with all its assets beneath
+	// /console/_next/..., so a single static-subtree route (advertised to Core
+	// as "/console/*") backs both the entry HTML and every asset. It
+	// authenticates itself via /auth/login and calls the JSON API with the
+	// resulting token — no separate session or server-side auth of its own.
+	//
+	// NOTE: the route is /console, not /admin — Core's gateway firewall blocks
+	// the reserved /admin/ prefix, which would 403 every asset served beneath it.
+	p.Static("/console", serveAdmin)
 
 	p.POST("/auth/register", h.register,
 		option.Summary("Register a new tenant"),
@@ -647,6 +659,144 @@ func registerRoutes(p *plugin.Plugin, h *handlers) {
 		option.Request(new(SetTenantStatusRequest)),
 		option.Response(http.StatusOK, new(TenantSummaryResponse)),
 		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+	p.Handle(http.MethodPatch, "/tenants/:id", h.setTenantByAdmin,
+		option.Summary("Edit any tenant's name/plan"),
+		option.Description("Platform admin only. The cross-tenant console path (PATCH /tenant edits the "+
+			"caller's own tenant). Slug is immutable and not accepted."),
+		option.Tags("platform-admins"),
+		option.Request(new(UpdateTenantRequest)),
+		option.Response(http.StatusOK, new(TenantSummaryResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+
+	// Cross-tenant member management for the platform-admin console (drill-in).
+	// Tenant comes from the path; platform admin gated. Mirror of the /members
+	// routes but usable across tenants (see the adminListMembers comment).
+	p.GET("/tenants/:id/members", h.adminListMembers,
+		option.Summary("List any tenant's members"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(ListMembersResponse)),
+		option.Response(http.StatusForbidden, new(ErrorResponse)),
+	)
+	p.POST("/tenants/:id/members", h.adminAddMember,
+		option.Summary("Add a member to any tenant"),
+		option.Description("Platform admin only. New members land in the tenant's first branch."),
+		option.Tags("platform-admins"),
+		option.Request(new(AddMemberRequest)),
+		option.Response(http.StatusOK, new(AddMemberResponse)),
+	)
+	p.Handle(http.MethodPatch, "/tenants/:id/members/:userId/role", h.adminUpdateMemberRole,
+		option.Summary("Change a member's role in any tenant"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Request(new(UpdateMemberRoleRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPatch, "/tenants/:id/members/:userId/status", h.adminSetMemberStatus,
+		option.Summary("Suspend/reactivate a member in any tenant"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Request(new(SetMemberStatusRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodPatch, "/tenants/:id/members/:userId/password", h.adminSetMemberPassword,
+		option.Summary("Reset a member's password in any tenant"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Request(new(SetPasswordRequest)),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.Handle(http.MethodDelete, "/tenants/:id/members/:userId", h.adminRemoveMember,
+		option.Summary("Remove a member from any tenant"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.GET("/tenants/:id/roles", h.adminListRoles,
+		option.Summary("List any tenant's roles"),
+		option.Description("Platform admin only. System + that tenant's custom roles, for the member role picker."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(ListRolesResponse)),
+	)
+
+	// Cross-tenant branches (console drill-in).
+	p.GET("/tenants/:id/branches", h.adminListBranches,
+		option.Summary("List any tenant's branches"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(ListBranchesResponse)),
+	)
+	p.POST("/tenants/:id/branches", h.adminCreateBranch,
+		option.Summary("Create a branch in any tenant"),
+		option.Description("Platform admin only. Slug must be unique within the tenant."),
+		option.Tags("platform-admins"),
+		option.Request(new(CreateBranchRequest)),
+		option.Response(http.StatusCreated, new(BranchResponse)),
+	)
+	p.Handle(http.MethodPatch, "/tenants/:id/branches/:branchId", h.adminUpdateBranch,
+		option.Summary("Rename or archive a branch in any tenant"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Request(new(UpdateBranchRequest)),
+		option.Response(http.StatusOK, new(BranchResponse)),
+	)
+
+	// Cross-tenant roles CRUD (console drill-in). List is above (role picker).
+	p.POST("/tenants/:id/roles", h.adminCreateRole,
+		option.Summary("Create a custom role in any tenant"),
+		option.Description("Platform admin only."),
+		option.Tags("platform-admins"),
+		option.Request(new(CreateRoleRequest)),
+		option.Response(http.StatusCreated, new(RoleResponse)),
+	)
+	p.Handle(http.MethodPatch, "/tenants/:id/roles/:roleId", h.adminUpdateRole,
+		option.Summary("Update a custom role in any tenant"),
+		option.Description("Platform admin only. System roles can't be edited."),
+		option.Tags("platform-admins"),
+		option.Request(new(UpdateRoleRequest)),
+		option.Response(http.StatusOK, new(RoleResponse)),
+	)
+	p.Handle(http.MethodDelete, "/tenants/:id/roles/:roleId", h.adminDeleteRole,
+		option.Summary("Delete a custom role in any tenant"),
+		option.Description("Platform admin only. System roles can't be deleted."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.GET("/permissions", h.adminListPermissions,
+		option.Summary("List the grantable permission vocabulary"),
+		option.Description("Platform admin only. Used by the role editor's permission picker."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(ListPermissionsResponse)),
+	)
+
+	// Database backup & restore. Per-tenant lives under /tenants/:id/...; full-DB
+	// under /platform/db/... — deliberately NOT /admin/db, which Core's firewall
+	// blocks. Backups stream a .sql download; restores take a multipart upload.
+	p.GET("/tenants/:id/backup", h.backupTenant,
+		option.Summary("Download a SQL backup of one tenant's schema"),
+		option.Description("Platform admin only. Streams a pg_dump of tenant_<slug>."),
+		option.Tags("platform-admins"),
+	)
+	p.POST("/tenants/:id/restore", h.restoreTenant,
+		option.Summary("Restore one tenant's schema from an uploaded SQL dump"),
+		option.Description("Platform admin only. DESTRUCTIVE: drops and recreates the tenant's "+
+			"objects from the dump. Send the dump as multipart form field 'file'."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(MessageResponse)),
+	)
+	p.GET("/platform/db/backup", h.backupAll,
+		option.Summary("Download a SQL backup of the whole database"),
+		option.Description("Platform admin only. Streams a full pg_dump."),
+		option.Tags("platform-admins"),
+	)
+	p.POST("/platform/db/restore", h.restoreAll,
+		option.Summary("Restore the whole database from an uploaded SQL dump"),
+		option.Description("Platform admin only. DESTRUCTIVE: overwrites every tenant. Send the "+
+			"dump as multipart form field 'file'."),
+		option.Tags("platform-admins"),
+		option.Response(http.StatusOK, new(MessageResponse)),
 	)
 
 	// Route permissions — Core enforces these at the gateway before proxying.
@@ -1056,6 +1206,375 @@ func (h *handlers) setTenantStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, TenantSummaryResponse{Tenant: *t})
+}
+
+// setTenantByAdmin lets a platform admin edit any tenant's name/plan by id.
+// (PATCH /tenant edits the caller's OWN tenant and needs tenant:manage; this is
+// the cross-tenant console path, gated on platform admin instead.)
+func (h *handlers) setTenantByAdmin(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	tenantID := c.Param("id")
+	var in UpdateTenantRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	if _, err := h.authSvc.UpdateTenant(c.Request.Context(), tenantID, in.Name, in.Plan); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	// Return the full summary (incl. status) so the console can refresh the row
+	// in place — UpdateTenant itself returns TenantInfo without status.
+	summary, err := h.authSvc.GetTenant(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TenantSummaryResponse{Tenant: *summary})
+}
+
+// ── Cross-tenant member management (platform-admin console drill-in) ─────────
+//
+// The /members routes take their tenant from the caller's own gateway header
+// and need user:read / user:invite — they're for a tenant's own owner/admin.
+// These /tenants/:id/members routes instead take the tenant from the path and
+// gate on platform admin, so the console can drill into ANY tenant. The service
+// layer already takes tenantID as a parameter, so it's reused unchanged; the
+// last-manager guards still apply. There's no self-guard here — a platform
+// admin acting across tenants isn't a member of the target tenant.
+
+func (h *handlers) adminListMembers(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	members, err := h.authSvc.ListMembers(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListMembersResponse{Members: members})
+}
+
+func (h *handlers) adminUpdateMemberRole(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in UpdateMemberRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	err := h.authSvc.UpdateMemberRole(c.Request.Context(), c.Param("id"), c.Param("userId"), in.Role)
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrLastManager):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "cannot demote the tenant's last manager", Code: "last_manager"})
+	case err != nil:
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "role updated"})
+	}
+}
+
+func (h *handlers) adminSetMemberStatus(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in SetMemberStatusRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	err := h.authSvc.SetMemberStatus(c.Request.Context(), c.Param("id"), c.Param("userId"), in.Status)
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrLastManager):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "cannot suspend the tenant's last manager", Code: "last_manager"})
+	case err != nil:
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "member status updated"})
+	}
+}
+
+func (h *handlers) adminRemoveMember(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	err := h.authSvc.RemoveMember(c.Request.Context(), c.Param("id"), c.Param("userId"))
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case errors.Is(err, auth.ErrLastManager):
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "cannot remove the tenant's last manager", Code: "last_manager"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "member removed"})
+	}
+}
+
+func (h *handlers) adminSetMemberPassword(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in SetPasswordRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	err := h.authSvc.SetMemberPassword(c.Request.Context(), c.Param("id"), c.Param("userId"), in.NewPassword)
+	switch {
+	case errors.Is(err, auth.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "member not found"})
+	case err != nil:
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	default:
+		c.JSON(http.StatusOK, MessageResponse{Message: "password reset"})
+	}
+}
+
+// adminAddMember adds a member to a tenant from the console. AddMember needs a
+// branch; the console isn't branch-aware yet, so new members land in the
+// tenant's first branch (every tenant has one from registration).
+func (h *handlers) adminAddMember(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	tenantID := c.Param("id")
+	var in AddMemberRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	branches, err := h.authSvc.ListBranches(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if len(branches) == 0 {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "tenant has no branch to add the member to"})
+		return
+	}
+	memberIn := auth.AddMemberInput{
+		Email:    in.Email,
+		Role:     in.Role,
+		Password: in.Password,
+		FullName: in.FullName,
+		Phone:    in.Phone,
+		JobTitle: in.JobTitle,
+	}
+	err = h.authSvc.AddMember(c.Request.Context(), tenantID, branches[0].ID, memberIn)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, AddMemberResponse{Message: "member added"})
+}
+
+// adminListRoles lists a tenant's roles (system + that tenant's custom) for the
+// console's member role picker. Platform-admin gated, tenant from the path.
+func (h *handlers) adminListRoles(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	roles, err := h.authSvc.ListRoles(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListRolesResponse{Roles: roles})
+}
+
+// ── Cross-tenant branches & roles CRUD (console drill-in) ───────────────────
+// Same pattern as the member admin routes: tenant from the path, platform-admin
+// gated, existing service methods reused.
+
+func (h *handlers) adminListBranches(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	branches, err := h.authSvc.ListBranches(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListBranchesResponse{Branches: branches})
+}
+
+func (h *handlers) adminCreateBranch(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in CreateBranchRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	b, err := h.authSvc.CreateBranch(c.Request.Context(), c.Param("id"), in.Slug, in.Name)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, BranchResponse{Branch: *b})
+}
+
+func (h *handlers) adminUpdateBranch(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in UpdateBranchRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	b, err := h.authSvc.UpdateBranch(c.Request.Context(), c.Param("id"), c.Param("branchId"), in.Name, in.Status)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, BranchResponse{Branch: *b})
+}
+
+func (h *handlers) adminCreateRole(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in CreateRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	r, err := h.authSvc.CreateRole(c.Request.Context(), c.Param("id"), in.Slug, in.Name, in.Permissions)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, RoleResponse{Role: *r})
+}
+
+func (h *handlers) adminUpdateRole(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	var in UpdateRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+		return
+	}
+	r, err := h.authSvc.UpdateRole(c.Request.Context(), c.Param("id"), c.Param("roleId"), in.Name, in.Permissions)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, RoleResponse{Role: *r})
+}
+
+func (h *handlers) adminDeleteRole(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	if err := h.authSvc.DeleteRole(c.Request.Context(), c.Param("id"), c.Param("roleId")); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "role deleted"})
+}
+
+// adminListPermissions returns the grantable permission vocabulary for the role
+// editor's permission picker.
+func (h *handlers) adminListPermissions(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	c.JSON(http.StatusOK, ListPermissionsResponse{Permissions: rbac.Catalog})
+}
+
+// ── Database backup & restore (platform-admin console) ──────────────────────
+//
+// Backups are streamed straight to the HTTP response — nothing is written to
+// the server's disk. Restores read the uploaded dump and pipe it into psql in a
+// single transaction. Full-DB routes live under /platform/db/... (NOT /admin/,
+// which Core's gateway firewall blocks). pg_dump/psql must be on PATH.
+
+// dumpFilename builds a timestamped download name.
+func dumpFilename(label string) string {
+	return "apicorex-" + label + "-" + time.Now().UTC().Format("20060102-150405") + ".sql"
+}
+
+func (h *handlers) backupTenant(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	t, err := h.authSvc.GetTenant(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "tenant not found"})
+		return
+	}
+	schema := "tenant_" + t.Slug
+	c.Header("Content-Type", "application/sql")
+	c.Header("Content-Disposition", `attachment; filename="`+dumpFilename(t.Slug)+`"`)
+	if err := h.backup.DumpSchema(c.Request.Context(), schema, c.Writer); err != nil {
+		// Headers may already be sent; log-and-abort is the best we can do.
+		log.Printf("[backup] tenant %s dump failed: %v", t.Slug, err)
+		c.Header("X-Backup-Error", err.Error())
+	}
+}
+
+func (h *handlers) backupAll(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	c.Header("Content-Type", "application/sql")
+	c.Header("Content-Disposition", `attachment; filename="`+dumpFilename("full")+`"`)
+	if err := h.backup.DumpAll(c.Request.Context(), c.Writer); err != nil {
+		log.Printf("[backup] full dump failed: %v", err)
+		c.Header("X-Backup-Error", err.Error())
+	}
+}
+
+// restoreFromUpload reads the uploaded "file" form field and pipes it into psql.
+func (h *handlers) restoreFromUpload(c *gin.Context) error {
+	f, err := c.FormFile("file")
+	if err != nil {
+		return fmt.Errorf("no dump file uploaded")
+	}
+	src, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("cannot read upload: %w", err)
+	}
+	defer src.Close()
+	return h.backup.Restore(c.Request.Context(), src)
+}
+
+func (h *handlers) restoreTenant(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	// A tenant dump carries its own schema DROP/CREATE, so restoring it only
+	// touches that tenant — but it IS destructive, so the console gates it behind
+	// a type-to-confirm. We don't re-validate the confirmation server-side beyond
+	// requiring platform admin; the guard is a UX safety net, not the auth check.
+	if err := h.restoreFromUpload(c); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "restore complete"})
+}
+
+func (h *handlers) restoreAll(c *gin.Context) {
+	if !requirePlatformAdmin(c) {
+		return
+	}
+	if err := h.restoreFromUpload(c); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "restore complete"})
 }
 
 func (h *handlers) listPlatformAdmins(c *gin.Context) {

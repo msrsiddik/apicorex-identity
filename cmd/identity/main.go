@@ -20,6 +20,7 @@ import (
 	"github.com/msrsiddik/apicorex-identity/internal/plugin"
 	"github.com/msrsiddik/apicorex-identity/internal/pluginmgr"
 	"github.com/msrsiddik/apicorex-identity/internal/rbac"
+	"github.com/msrsiddik/apicorex-identity/internal/dbbackup"
 	itenant "github.com/msrsiddik/apicorex-identity/internal/tenant"
 )
 
@@ -110,6 +111,7 @@ func main() {
 	})
 	registerRoutes(p, &handlers{
 		authSvc: authSvc, saga: saga, installer: installer,
+		backup:         dbbackup.New(dsn),
 		pluginKey:      os.Getenv("PLUGIN_API_KEY"),
 		googleClientID: googleClientID,
 	})

@@ -9,6 +9,11 @@ bin/
 dist/
 *.exe
 
+# Admin UI: node deps and prior build output are rebuilt inside the image.
+cmd/identity/admin/node_modules/
+cmd/identity/admin/.next/
+cmd/identity/admin/out/
+
 # Editor / OS
 .idea/
 .vscode/

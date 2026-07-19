@@ -91,3 +91,13 @@ func (s *Service) UpdateTenant(ctx context.Context, tenantID, name, plan string)
 	}
 	return &TenantInfo{ID: t.ID, Slug: t.Slug, Name: t.Name, Plan: t.Plan}, nil
 }
+
+// GetTenant returns a single tenant as a summary (incl. status). Used by the
+// platform-admin console to refresh a row after an edit.
+func (s *Service) GetTenant(ctx context.Context, tenantID string) (*TenantSummary, error) {
+	t, err := s.entClient.Tenant.Get(ctx, tenantID)
+	if err != nil {
+		return nil, errors.New("tenant not found")
+	}
+	return &TenantSummary{ID: t.ID, Slug: t.Slug, Name: t.Name, Plan: t.Plan, Status: t.Status}, nil
+}

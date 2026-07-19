@@ -10,6 +10,13 @@ dist/
 *.exe
 *.out
 
+# Admin UI (Next.js) — node deps and build output; out/ is rebuilt at
+# image-build time and embedded into the Go binary.
+cmd/identity/admin/node_modules/
+cmd/identity/admin/.next/
+cmd/identity/admin/out/
+cmd/identity/admin/next-env.d.ts
+
 # Local config override (commit only .example)
 config.yaml
 
