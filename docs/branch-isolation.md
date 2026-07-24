@@ -12,12 +12,13 @@ Branch isolation is **logical**, not physical:
 - Branch-scoped tables carry a `branch_id` column.
 - Every read/write must be filtered by the caller's **active branch**.
 
-The active branch comes from the verified access token. Core injects it into the
-proxied request as `X-ApiCoreX-Branch-ID` (and `-Branch-Slug`). A user only ever
-holds a token for a branch they're a member of (login lands on their default
-branch; `/branches/switch` issues a token for another branch they belong to).
-So "trust the header" is safe — Core verified the JWT and stripped any
-client-supplied `X-ApiCoreX-*` headers first.
+The active branch comes from the caller's device token, resolved by Core via
+Identity's `/internal/introspect`. Core injects it into the proxied request as
+`X-ApiCoreX-Branch-ID` (and `-Branch-Slug`). A device token only ever scopes to
+a branch its owner is a member of (login lands on their current branch;
+`/branches/switch` moves the membership and issues a fresh token for the new
+branch). So "trust the header" is safe — Core resolved the token via Identity
+and stripped any client-supplied `X-ApiCoreX-*` headers first.
 
 ## The rule
 
@@ -75,6 +76,6 @@ contract), not at the switch endpoint.
 
 | Layer | Responsibility |
 |-------|----------------|
-| Identity | Issues branch-scoped tokens; membership-checked switch. |
-| Core gateway | Verifies JWT, injects `X-ApiCoreX-Branch-ID`, strips spoofed headers. |
+| Identity | Issues branch-scoped device tokens; membership-checked switch; resolves branch on every introspect call. |
+| Core gateway | Resolves the device token via Identity, injects `X-ApiCoreX-Branch-ID`, strips spoofed headers. |
 | Branch-scoped plugin | `RequireBranch` / `BranchScope` + `WHERE branch_id = ?` on every query. |
