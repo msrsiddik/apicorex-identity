@@ -21,8 +21,11 @@ services:
       # network and use the Core service name, e.g. http://core:9999.
       CORE_URL: http://host.docker.internal:9999
       PLUGIN_ADDR: ":50051"
-      # URL Core uses to reach this plugin. Must be resolvable from Core.
-      PLUGIN_BASE_URL: http://identity:50051
+      # URL Core uses to reach this plugin. Must be resolvable from Core. Core
+      # and this plugin run as separate compose projects (separate networks),
+      # so a container-name URL (http://identity:50051) doesn't resolve from
+      # Core's side — go through the host instead, same as CORE_URL above.
+      PLUGIN_BASE_URL: http://host.docker.internal:50051
     ports:
       - "50051:50051"
     extra_hosts:
