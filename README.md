@@ -115,16 +115,25 @@ registers with Core, and starts serving. See the root
 
 ### With Docker
 
-This repo ships a `Dockerfile` and a standalone `docker-compose.yml` (plugin +
-its Postgres). It still needs a running Core to register with — point `CORE_URL`
-at it (the compose file defaults to `http://host.docker.internal:8080`).
+This repo ships a `Dockerfile` and a standalone `docker-compose.yml` that
+connects to the **shared** Postgres started from Core's compose file (host
+port `15432`) — start that first:
 
 ```bash
-docker compose up --build
+cd ../apicorex && docker compose up -d postgres
+cd ../apicorex-identity && docker compose up --build
 ```
 
-For an all-in-one stack (Core + Postgres + Redis + every plugin) use the
-compose file in the [Core repo](../apicorex) instead.
+It still needs a running Core to register with — point `CORE_URL` at it (the
+compose file defaults to `http://host.docker.internal:9999`, matching Core's
+compose-stack port). Core and this plugin run as separate compose projects
+(separate Docker networks), so container-name URLs don't resolve across them —
+`CORE_URL` and `PLUGIN_BASE_URL` both go through the host
+(`host.docker.internal`) instead.
+
+Core's own compose file only brings up Core + Postgres (no plugins) — each
+plugin repo, including this one, runs its own compose stack against that
+shared Postgres.
 
 ---
 
@@ -150,6 +159,8 @@ compose file in the [Core repo](../apicorex) instead.
 | GET | `/auth/slug-available` | yes | — | `?slug=` → `{valid, available, reason}` for live slug checks |
 | GET | `/auth/slug-suggest` | yes | — | `?name=` (required) → a valid, available slug derived from the name |
 | POST | `/auth/login` | yes | — | Returns a device token (lands on the user's current branch) |
+| GET | `/auth/config` | yes | — | Public auth config the client needs before login (Google client ID, whether Google login is enabled) |
+| POST | `/auth/google` | yes | — | Password-free login with a Google ID token; the matching account must already exist (never self-registers). Same tenant-chooser behavior as `/auth/login` |
 | POST | `/auth/logout` | no | — | Revoke the caller's device token |
 | GET | `/me` | no | — | Current user: roles, permissions, branch, profile |
 | GET | `/branches` | no | `branch:read` | List the tenant's branches |
