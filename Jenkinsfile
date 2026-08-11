@@ -14,6 +14,18 @@ pipeline {
     }
 
     stages {
+        stage('Admin UI') {
+            // go:embed all:admin/out (cmd/identity/admin.go) requires this
+            // directory to exist and be non-empty. It's gitignored — a fresh
+            // checkout has no admin/out until it's built here.
+            steps {
+                dir('cmd/identity/admin') {
+                    sh 'npm ci'
+                    sh 'npm run build'
+                }
+            }
+        }
+
         stage('Vet') {
             steps {
                 sh 'go vet ./...'
